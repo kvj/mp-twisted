@@ -1,0 +1,6 @@
+*.log
+*.ini
+db/*
+data
+*.pyc
+mp.*
