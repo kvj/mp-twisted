@@ -3,6 +3,7 @@
 import logging
 from mp import common, message
 from mp.server import database
+from twisted.internet import reactor
 import os
 import imp
 import sys
@@ -812,8 +813,13 @@ def manage_unread_groups(m, conn):
 def process_message(message, connection):
 	#logging.debug('Message %s', message.name)
 
-	if message.get('via'):
-		message_to_plugin(message, connection)
+	if message.name in ['shutdown']:
+		try:
+			reactor.stop()
+			if common.daemon:
+				common.daemon.delpid()
+		except:
+			pass
 		return
 
 	if message.name in ['plugins']:
@@ -821,6 +827,10 @@ def process_message(message, connection):
 
 	if message.name in ['net']:
 		manage_networks(message, connection)
+
+	if message.get('via'):
+		message_to_plugin(message, connection)
+		return
 
 	if message.name in ['users']:
 		manage_users(message, connection)

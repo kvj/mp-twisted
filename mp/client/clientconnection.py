@@ -8,6 +8,7 @@ import logging
 import socket
 import subprocess
 import time
+import os
 
 class ClientConnection(XmlStream):
 
@@ -72,11 +73,15 @@ class ConnectionFactory(ClientFactory):
 		#If first connection was failed - try to start server
 		if not self.reconnect:
 			#Start, reconnect
-			subprocess.Popen(['python', 'server.py'])
+			try:
+				subprocess.Popen(['python', 'server.py']).wait()
+			except Exception, err:
+				logging.exception('Error starting server: %s', err)
 			time.sleep(3)
 			do_connect(self.listener, True)
 		else:
 			#Stop reactor, exit
+			logging.info('Can\'t connect to server, exiting')
 			reactor.stop()
 
 
@@ -94,5 +99,8 @@ def do_connect(listener, reconnect = False):
 
 def start_client(listener):
 	common.init_client()
-	do_connect(listener, True)
+	auto_server = False
+	if common.config.has_option('Client', 'auto_server') and common.config.getboolean('Client', 'auto_server'):
+		auto_server = True
+	do_connect(listener, not auto_server)
 	reactor.run()

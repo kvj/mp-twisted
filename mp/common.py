@@ -17,6 +17,7 @@ def string_to_log_level(string):
 	return logging.ERROR
 
 config = ConfigParser.RawConfigParser()
+daemon = None
 
 def init_config():
 	try:

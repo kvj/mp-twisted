@@ -20,7 +20,7 @@ class Cmd(basic.LineReceiver):
 
 	from os import linesep as delimiter
 	def lineReceived(self, line):
-		logging.debug('Parsing %s', line)
+		#logging.debug('Parsing %s', line)
 		if line == 'quit':
 			#Try to stop reactor
 			logging.debug('Stopping client')
@@ -318,6 +318,7 @@ def process_message(message, connection):
 def client_connected(connection):
 	logging.debug('Connection established, show prompt')
 	interface.connection = connection
+	print_line('Type command:')
 	stdio.StandardIO(interface)
 
 def client_disconnected(connection):
