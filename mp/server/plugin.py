@@ -70,20 +70,20 @@ class Plugin:
 	def send_message(self, message):
 		manager.deliver_message(self, message)
 
-	def get_setting(self, name, default):
+	def get_setting(self, name, default = None):
 		if name in self.settings:
 			return self.settings[name]
 		return default
 
-	def get_intsetting(self, name, default):
+	def get_intsetting(self, name, default = 0):
 		if name in self.settings:
 			return int(self.settings[name])
 		return default
 
-	def get_boolsetting(self, name, default):
+	def get_boolsetting(self, name, default = False):
 		if name in self.settings:
 			value = self.settings[name]
-			if value and value.lower() in ['yes', 'true']:
+			if value and value.lower() in ['yes', 'true', '1']:
 				return True
 			return False
 		return default
@@ -92,7 +92,7 @@ class Plugin:
 		pass
 
 	def new_message_id(self):
-		return manager.next_message_id()
+		return manager.next_message_id(self.instance_id)
 
 	def new_message(self, message, connection):
 		pass

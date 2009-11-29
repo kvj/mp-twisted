@@ -45,6 +45,7 @@ def init_plugins():
 
 	seq = database.Table('messages')
 	seq.add_id('id')
+	seq.add_column('instance_id')
 	Globals.master.add_table(seq)
 
 	instances = database.Table('instances')
@@ -162,7 +163,7 @@ def init_plugins():
 			name = row[0]
 			plugin = row[1]
 			logging.debug('Creating instance of %s: %s', plugin, name)
-			instance = load_instance(name, plugin)
+			instance = load_instance(name, plugin, row[2])
 			if not instance:
 				continue
 			#Load settings
@@ -170,9 +171,11 @@ def init_plugins():
 			c2.execute('select name, value from settings where instance_id=?', (row[2], ))
 			for row2 in c2:
 				instance.settings[row2[0]] = row2[1]
-			if not instance.activate():
-				#Remove instance
-				del Globals.plugin_instances[name]
+			instance.disabled = instance.get_boolsetting('disabled', False)
+			if not instance.disabled:
+				if not instance.activate():
+					#Remove instance
+					del Globals.plugin_instances[name]
 		Globals.master.commit(conn)
 	except Exception, err:
 		Globals.master.rollback(conn)
@@ -180,23 +183,18 @@ def init_plugins():
 		return False
 	return True
 
-def next_message_id():
+def next_message_id(instance_id):
 	cn, c = Globals.master.open_cursor()
-	result = 0
+	result = 1
 	try:
-		c.execute('select id from messages')
-		row = c.fetchone()
-		if row:
-			result = row[0]+1
-			c.execute('update messages set id=?', (result, ))
-		else:
-			c.execute('insert into messages (id) values (?)', (result, ))
+		c.execute('insert into messages (instance_id) values (?)', (instance_id, ))
+		result = c.lastrowid
 		Globals.master.commit(cn)
 	except:
 		Globals.master.rollback(cn)
 	return result
 
-def load_instance(name, plugin):
+def load_instance(name, plugin, instance_id):
 	instance = None
 	if not plugin in Globals.plugins:
 		logging.error('Can\'t find plugin %s', plugin)
@@ -204,7 +202,9 @@ def load_instance(name, plugin):
 		instance = Globals.plugins[plugin].get_class()()
 		instance.name = name
 		instance.type = plugin
+		instance.instance_id = instance_id
 		instance.settings = {}
+		instance.disabled = False
 		instance.db = database.Database('%s/%s.db' % (Globals.plugins_data, name))
 		Globals.plugin_instances[name] = instance
 	return instance
@@ -231,17 +231,22 @@ def manage_networks(m, conn):
 				return
 			#Add entry to DB
 			cn, c = Globals.master.open_cursor()
+			instance_id = -1
 			try:
 				c.execute('select id from instances where name=?', (alias, ))
-				if not c.fetchone():
+				r = c.fetchone()
+				if not r:
 					c.execute('insert into instances (name, plugin) values (?, ?)', (alias, plugin))
+					instance_id = c.lastrowid
+				else:
+					instance_id = r[0]
 				Globals.master.commit(cn)
 			except Exception, err:
 				Globals.master.rollback(cn)
 				logging.error('Error adding new instance: %s', err)
 				report_error(m, conn, 'Can\'t add entry, DB error')
 				return
-			instance = load_instance(alias, plugin)
+			instance = load_instance(alias, plugin, instance_id)
 			if not instance:
 				logging.error('Can\'t create instance of %s', plugin)
 				report_error(m, conn, 'Can\'t create instance')
@@ -271,7 +276,8 @@ def manage_networks(m, conn):
 			Globals.master.rollback(cn)
 			report_error(m, conn, 'Error while removing entry')
 			return
-		Globals.plugin_instances[plugin].deactivate()
+		if not Globals.plugin_instances[plugin].disabled:
+			Globals.plugin_instances[plugin].deactivate()
 		del Globals.plugin_instances[plugin]
 		#Remove database and files
 		report_ok(m, conn)
@@ -293,12 +299,15 @@ def manage_networks(m, conn):
 				if opt_value:
 					logging.debug('Adding option %i, %s, %s', row[0], opt_name, opt_value)
 					c.execute('insert into settings (instance_id, name, value) values (?, ?, ?)', (row[0], opt_name, opt_value))
-					Globals.plugin_instances[plugin].settings[opt_name] = opt_value
-					Globals.plugin_instances[plugin].setting_changed(opt_name, opt_value)
+					pl = Globals.plugin_instances[plugin]
+					pl.settings[opt_name] = opt_value
+					if not pl.disabled:
+						pl.setting_changed(opt_name, opt_value)
 				else:
-					if opt_name in Globals.plugin_instances[plugin].settings:
-						del Globals.plugin_instances[plugin].settings[opt_name]
-					Globals.plugin_instances[plugin].setting_changed(opt_name, None)
+					if opt_name in pl.settings:
+						del pl.settings[opt_name]
+					if not pl.disabled:
+						pl.setting_changed(opt_name, None)
 			resp = message.response_message(m, 'options')
 			c.execute('select name, value from settings where instance_id=? order by name', (row[0], ))
 			for r in c:
@@ -572,13 +581,16 @@ def message_to_plugin(m, conn):
 	net = m.get('via')
 	if net in Globals.plugin_instances:
 		plugin = Globals.plugin_instances[net]
-		plugin.new_message(m, conn)
+		if not plugin.disabled:
+			plugin.new_message(m, conn)
 
 def get_data_from_plugins(mess, c, field, default = []):
 	uu = {}
 	for net in Globals.plugin_instances:
 		lc = LoopbackConnection()
 		plugin = Globals.plugin_instances[net]
+		if plugin.disabled:
+			continue
 		plugin.new_message(mess, lc)
 		if len(lc.messages)>0:
 			c.execute('select id from instances where name=?', (net, ))
@@ -593,6 +605,8 @@ def get_data_from_plugin(net_id, mess, c):
 	if row and row[0] in Globals.plugin_instances:
 		lc = LoopbackConnection()
 		plugin = Globals.plugin_instances[row[0]]
+		if plugin.disabled:
+			return None
 		plugin.new_message(mess, lc)
 		if len(lc.messages)>0:
 			return lc.messages[0]

@@ -5,13 +5,12 @@ import cmd
 from twisted.internet import reactor, stdio
 from twisted.protocols import basic
 import sys
-from mp import message
-server = 1
+from mp import message, common
 from mp.client.termcolor import colored
+import datetime
 import time
-import calendar
 
-#sys.setdefaultencoding('utf-8')
+server = 1
 
 class Cmd(basic.LineReceiver):
 
@@ -146,24 +145,31 @@ def print_line(line, color = None):
 		logging.exception('Error while printing %s: %s', line, err)
 
 def gmt_iso_to_str(iso):
-	current = time.localtime()
-	parsed = current
+	delta = datetime.timedelta()
 	try:
-		p = time.strptime(iso, '%Y-%m-%dT%H:%M:%S')
-		cal = calendar.timegm(p)
-		parsed = time.localtime(cal)
+		if common.config.has_option('Client', 'tz'):
+			delta = datetime.timedelta(hours = common.config.getfloat('Client', 'tz'))
+	except:
+		pass
+	current = datetime.datetime.fromtimestamp(time.mktime(time.gmtime()))
+	current = current + delta
+	parsed = current
+	
+	try:
+		p = datetime.datetime.strptime(iso, '%Y-%m-%dT%H:%M:%S')
+		parsed = p + delta
 	except Exception, err:
 		logging.exception('Error while converting %s to string: %s', iso, err)
 	format = '%I:%M %p'
 	try:
 		show_year = False
-		if current[0]!=parsed[0]:
+		if current.year!=parsed.year:
 			show_year = True
 		show_date = False
-		if current[1]!=parsed[1] or current[2]!=parsed[2] or show_year:
+		if current.month!=parsed.month or current.day!=parsed.day or show_year:
 			show_date = True
 		show_seconds = False
-		if not show_date and current[3]==parsed[3] and current[4]==parsed[4]:
+		if not show_date and current.hour==parsed.hour and current.minute==parsed.minute:
 			show_seconds = True
 		if show_seconds:
 			format = '%I:%M:%S %p'
@@ -173,7 +179,7 @@ def gmt_iso_to_str(iso):
 			format = '%y, %m/%d %I:%M %p'
 	except Exception, err:
 		pass
-	return time.strftime(format, parsed)
+	return parsed.strftime(format)
 
 def print_message(m, _from):
 	_sender = m.get('user', m.get('userid', ''))
@@ -252,7 +258,15 @@ def process_message(message, connection):
 			return -1
 		else:
 			return 0
-
+	def sort_messages(m1, m2):
+		d1 = m1.get('message-date', '')
+		d2 = m2.get('message-date', '')
+		if d1>d2:
+			return -1
+		elif d1<d2:
+			return 1
+		else:
+			return 0
 	def sort_by_count(i1, i2):
 		c1 = i1.get('count', 0)
 		c2 = i2.get('count', 0)
@@ -284,7 +298,7 @@ def process_message(message, connection):
 
 	if 'unread_messages' == message.name:
 		print_line(u'%sUnread messages:' % _from)
-		for mess in message.get('messages', []):
+		for mess in sorted(message.get('messages', []), sort_messages):
 			print_message(mess, _from)
 
 	if 'mark_read' == message.name:
