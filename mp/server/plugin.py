@@ -95,7 +95,7 @@ class Plugin:
 		return manager.next_message_id(self.instance_id)
 
 	def new_message(self, message, connection):
-		pass
+		return False
 
 	def send_back(self, message, connection):
 		manager.deliver_message(self, message, connection)

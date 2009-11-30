@@ -169,6 +169,7 @@ class JabberPlugin(plugin.Plugin):
 		_jid = None
 		_date = time.gmtime()
 		_thread = None
+		m.set('via', self.name)
 		_id = self.new_message_id()
 		if element.thread:
 			_thread = element.thread.__str__()
@@ -177,11 +178,9 @@ class JabberPlugin(plugin.Plugin):
 			_from = _jid.userhost().lower()
 			_jid = element['from']
 			m.set('userid', _from)
-			for id in self.roster:
-				item = self.roster[id]
-				if item.jid == _from:
-					if item.nickname:
-						m.set('user', item.nickname)
+			ri = self.get_list_item(self.roster, _from)
+			if ri:
+				self._user_to_item(ri, m)
 		m.set('message', _body)
 		m.set('messageid', _id)
 		_time = time.mktime(_date)
@@ -190,7 +189,7 @@ class JabberPlugin(plugin.Plugin):
 		self.send_message(m)
 		cn, c = self.db.open_cursor()
 		try:
-			
+
 			c.execute('insert into messages (id_message, sender, jid, thread, date_received, body) values (?, ?, ?, ?, ?, ?)', (_id, _from, _jid, _thread, _time, _body))
 			self.db.commit(cn)
 			logging.debug('Message saved in DB')
@@ -381,7 +380,7 @@ class JabberPlugin(plugin.Plugin):
 				self.send_presence(self.show, self.priority, self.status)
 			else:
 				self.init_factory()
-			return
+			return True
 
 		def unread_counts():
 			cn, c = self.db.open_cursor()
@@ -415,6 +414,7 @@ class JabberPlugin(plugin.Plugin):
 					groups.append(gr)
 			resp.set('groups', groups)
 			self.send_back(resp, connection)
+			return True
 
 		if m.name in ['unread_users']:
 			resp = message.response_message(m, 'unread_users')
@@ -429,6 +429,7 @@ class JabberPlugin(plugin.Plugin):
 					users.append(u)
 			resp.set('users', users)
 			self.send_back(resp, connection)
+			return True
 
 		if m.name in ['unread_messages']:
 			resp = message.response_message(m, 'unread_messages')
@@ -455,7 +456,9 @@ class JabberPlugin(plugin.Plugin):
 					#Pack message
 					mess = message.Message('message')
 					mess.set('messageid', row[0])
+					mess.set('userid', row[1])
 					mess.set('message', row[2])
+					mess.set('via', self.name)
 					_time = row[3]
 					_strtime = self.time_to_iso(_time)
 					mess.set('message-date', _strtime)
@@ -469,6 +472,7 @@ class JabberPlugin(plugin.Plugin):
 				self.db.rollback(cn)
 				logging.exception('Error listing unread messages: %s', err)
 				self.send_error('Error listing unread messages', m, connection)
+			return True
 
 		if m.name in ['mark_read']:
 			resp = message.response_message(m, 'mark_read')
@@ -506,15 +510,16 @@ class JabberPlugin(plugin.Plugin):
 				self.db.rollback(cn)
 				logging.exception('Error marking read messages: %s', err)
 				self.send_error('Error marking read messages', m, connection)
+			return True
 
 		if not self.connected:
 			self.send_error('Not connected', m, connection)
-			return
+			return True
 		if m.name in ['message']:
 			#Send new message
 			if not m.get('to'):
 				self.send_error('No broadcast messages for XMPP', m, connection)
-				return
+				return True
 			userjid = m.get('to')
 			item = self.get_list_item(self.roster, userjid)
 			if item:
@@ -522,8 +527,25 @@ class JabberPlugin(plugin.Plugin):
 			else:
 				self.send_progress('Sending message to unknown user %s' % userjid)
 			self.send_xmpp_message(userjid, m.get('message'))
-			return
+			return True
 
+		if m.name in ['reply']:
+			#Send new message
+			cn, c = self.db.open_cursor()
+			try:
+				c.execute('select jid, thread from messages where id_message=?', (m.get('to', -1), ))
+				r = c.fetchone()
+				if r:
+					self.send_xmpp_message(r[0], m.get('message'), r[1])
+					c.execute('update messages set unread=0 where id_message=?', (m.get('to', -1), ))
+				else:
+					self.send_error('Message to reply isn\'t found', m, connection)
+				self.db.commit(cn)
+			except Exception, err:
+				self.db.rollback(cn)
+				logging.exception('Error while replying: %s', err)
+				self.send_error('Error while replying', m, connection)
+			return True
 		if m.name in ['groups']:
 			resp = message.response_message(m, 'groups')
 			#Enumerate all groups
@@ -544,6 +566,7 @@ class JabberPlugin(plugin.Plugin):
 				arr.append(group)
 			resp.set('groups', arr)
 			self.send_back(resp, connection)
+			return True
 
 		if m.name in ['users']:
 			#Prepare all users without groups
@@ -556,7 +579,7 @@ class JabberPlugin(plugin.Plugin):
 				#Add user
 				self.add_roster_item(userjid, name)
 				self.send_ok('User added', m, connection)
-				return
+				return True
 			if m.get('del'):
 				userid = m.get('del').lower()
 				item = self.get_list_item(self.roster, userid)
@@ -566,7 +589,7 @@ class JabberPlugin(plugin.Plugin):
 					self.send_ok('User removed', m, connection)
 				else:
 					self.send_error('Can\'t find user specified', m, conn)
-				return
+				return True
 			if m.get('mv'):
 				name = m.get('name', '')
 				userid = m.get('mv').lower()
@@ -578,10 +601,7 @@ class JabberPlugin(plugin.Plugin):
 					self.send_ok('User updated', m, connection)
 				else:
 					self.send_error('Can\'t find user specified', m, conn)
-				return
-
-
-
+				return True
 			users = []
 			for id in self.roster:
 				item = self.roster[id]
@@ -590,6 +610,7 @@ class JabberPlugin(plugin.Plugin):
 				users.append(self._user_to_item(item))
 			resp.set('users', users)
 			self.send_back(resp, connection)
+			return True
 
 		if m.name in ['group']:
 			resp = message.response_message(m, 'group')
@@ -598,7 +619,7 @@ class JabberPlugin(plugin.Plugin):
 				userid = m.get('user')
 				if group not in self.groups:
 					self.send_error('Invalid group', m, connection)
-					return
+					return True
 				group_name = self.groups[group]
 				item = self.get_list_item(self.roster, userid)
 				if item:
@@ -609,13 +630,13 @@ class JabberPlugin(plugin.Plugin):
 					self.send_ok('User added', m, connection)
 				else:
 					self.send_error('Invalid user', m, connection)
-				return
+				return True
 			if m.get('del'):
 				group = m.get('del')
 				userid = m.get('user')
 				if group not in self.groups:
 					self.send_error('Invalid group', m, connection)
-					return
+					return True
 				group_name = self.groups[group]
 				item = self.get_list_item(self.roster, userid)
 				if item:
@@ -626,7 +647,7 @@ class JabberPlugin(plugin.Plugin):
 					self.send_ok('User removed from group', m, connection)
 				else:
 					self.send_error('Invalid user', m, connection)
-				return
+				return True
 			id = m.get('show')
 			arr = []
 			group = self.get_list_item(self.groups, id)
@@ -641,6 +662,8 @@ class JabberPlugin(plugin.Plugin):
 				self.send_back(resp, connection)
 			else:
 				self.send_error('Invalid group', m)
+			return True
+		return False
 
 
 	def init_factory(self):

@@ -34,6 +34,30 @@ class ProxyHTTPClientFactory(client.HTTPClientFactory):
 		self.host = self.proxy_host
 		self.port = self.proxy_port
 
+class ProxyHTTPDownloader(client.HTTPDownloader):
+
+	def __init__(self, uri, file, proxy_host, proxy_port, *args, **kwargs):
+		self.proxy_host = proxy_host
+		self.proxy_port = proxy_port
+		if 'followRedirect' in kwargs:
+			del kwargs['followRedirect']
+		client.HTTPDownloader.__init__(self, uri, file, *args, **kwargs)
+
+	def buildProtocol(self, addr):
+		#logging.info('Connected')
+		return client.HTTPDownloader.buildProtocol(self, addr)
+
+	def setURL(self, url):
+		#logging.debug('Setting URL: %s', url)
+		prev_host = getattr(self, 'host', None)
+		client.HTTPDownloader.setURL(self, url)
+		#logging.debug('After parse: %s %s %s %s', self.scheme, self.host, self.port, self.path)
+		self.path = url
+		if prev_host!=self.host:
+			self.headers['Host'] = self.host
+		self.host = self.proxy_host
+		self.port = self.proxy_port
+
 def proxifyFactory(factory, host, port, use_ssl = False):
 	if not proxy_host or not proxy_port:
 		logging.debug('No proxy information - default behaviour')
@@ -45,14 +69,19 @@ def proxifyFactory(factory, host, port, use_ssl = False):
 	https_factory = https.ProxyHTTPSConnectionFactory(factory, host, port, use_ssl, proxy_user, proxy_pass)
 	reactor.connectTCP(proxy_host, proxy_port, https_factory)
 
-def getPage(url, *args, **kwargs):
+def downloadPage(url, file, *args, **kwargs):
+	factoryFactory = lambda url, *a, **kw: client.HTTPDownloader(url, file, *a, **kw)
+	proxyFactoryFactory = lambda url, *a, **kw: ProxyHTTPDownloader(url, file, *a, **kw)
+	return getPage(url, factoryFactory, proxyFactoryFactory, *args, **kwargs)
+
+def getPage(url, factoryFactory = client.HTTPClientFactory, proxyFactoryFactory = ProxyHTTPClientFactory,*args, **kwargs):
 	if not proxy_host or not proxy_port:
 		logging.debug('No proxy information - default behaviour')
 		return client.getPage(url, *args, **kwargs)
 	scheme, host, port, path = client._parse(url)
 	if scheme == 'https':
 		logging.debug('Proxy and HTTPS - connect via new class')
-		http_factory = client.HTTPClientFactory(url, followRedirect = 0, *args, **kwargs)
+		http_factory = factoryFactory(url, followRedirect = 0, *args, **kwargs)
 		https_factory = https.ProxyHTTPSConnectionFactory(http_factory, host, port, True, proxy_user, proxy_pass)
 		reactor.connectTCP(proxy_host, proxy_port, https_factory)
 		return http_factory.deferred
@@ -64,10 +93,10 @@ def getPage(url, *args, **kwargs):
 	if proxy_user and proxy_pass:
 		auth = base64.encodestring("%s:%s" %(proxy_user, proxy_pass))
 		headers['Proxy-Authorization'] = 'Basic %s' % (auth.strip())
-		logging.debug('Adding header: %s', headers['Proxy-Authorization'])
+		#logging.debug('Adding header: %s', headers['Proxy-Authorization'])
 		kwargs['headers'] = headers
 	#Cleanup proxy params
-	factory = ProxyHTTPClientFactory(url, proxy_host, proxy_port, followRedirect = 0, *args, **kwargs)
-	logging.debug('Do proxy %s %i', proxy_host, proxy_port)
+	factory = proxyFactoryFactory(url, proxy_host, proxy_port, followRedirect = 0, *args, **kwargs)
+	#logging.debug('Do proxy %s %i', proxy_host, proxy_port)
 	reactor.connectTCP(proxy_host, proxy_port, factory)
 	return factory.deferred

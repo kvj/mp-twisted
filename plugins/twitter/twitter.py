@@ -9,9 +9,9 @@ import time
 from lib import twitter
 
 class TwitterPlugin(plugin.Plugin):
-	
+
 	UPDATE_INTERVAL = 30
-	
+
 	def init_twitter(self):
 		tw = twitter.Twitter(self.get_setting('login'), self.get_setting('password'))
 		d = tw.verify_credentials()
@@ -24,21 +24,21 @@ class TwitterPlugin(plugin.Plugin):
 			self.send_error('Can\'t connect to twitter')
 		d.addCallback(ok)
 		d.addErrback(err)
-	
+
 	def _get_last_id(self, name, c):
 		c.execute('select last_id from ids where name=?', (name.lower(), ))
 		r = c.fetchone()
 		if r:
 			return r[0]
 		return None
-	
+
 	def _set_last_id(self, name, id, c):
 		c.execute('delete from ids where name=?', (name.lower(), ))
 		c.execute('insert into ids (name, last_id) values (?, ?)', (name.lower(), id))
 
 	def _on_update_err(self, error, msg = None):
 		self.send_error(msg)
-	
+
 	def _on_update_ok(self, arr, type = None, id_name = None):
 		logging.debug('Update complete %s, %s', type, len(arr))
 		if len(arr) == 0:
@@ -58,7 +58,7 @@ class TwitterPlugin(plugin.Plugin):
 					_id = entry.id
 					_date = time.strptime(entry.created_at, '%a %b %d %H:%M:%S +0000 %Y')
 					_time = time.mktime(_date)
-					logging.debug('Entry %s, %s, %s', _sender, entry.text, entry.in_reply_to_status_id)
+					logging.debug('Entry %s, %s, %s', _id, entry.created_at, entry.in_reply_to_status_id)
 					c.execute('select id_message from messages where id_tweet=?', (_id, ))
 					r = c.fetchone()
 					if not r:
@@ -69,7 +69,7 @@ class TwitterPlugin(plugin.Plugin):
 					m = message.Message('message')
 					m.set('messageid', message_id)
 					m.set('userid', _sender)
-					m.set('user', user.name)
+					#m.set('user', user.name)
 					m.set('message', entry.text)
 					m.set('type', type)
 					m.set('message-date', self.time_to_iso(_time))
@@ -77,10 +77,11 @@ class TwitterPlugin(plugin.Plugin):
 				except Exception, err:
 					logging.exception('Error on entry')
 			self.db.commit(cn)
+
 		except Exception, err:
 			self.db.rollback(cn)
 			logging.exception('Error while saving timeline')
-		
+
 	def _update_tline(self):
 		if not self.twitter:
 			return
@@ -89,30 +90,30 @@ class TwitterPlugin(plugin.Plugin):
 		try:
 			#c.execute('delete from messages')
 			id = self._get_last_id('tweet', c)
-			#id = None
+			#id = 6165489157
 			repl = self._get_last_id('replies', c)
 			#repl = None
 			direct = self._get_last_id('direct', c)
 			#direct = None
-			
+
 			d = self.twitter.home_timeline(params = {'since_id': id})
 			d.addCallback(self._on_update_ok, type = 'normal', id_name = 'tweet')
 			d.addErrback(self._on_update_err, msg = 'Error updating home timeline')
-			
+
 			d = self.twitter.replies(params = {'since_id': repl})
 			d.addCallback(self._on_update_ok, type = 'reply', id_name = 'replies')
 			d.addErrback(self._on_update_err, msg = 'Error updating replies timeline')
-			
+
 			d = self.twitter.direct_messages(params = {'since_id': repl})
 			d.addCallback(self._on_update_ok, type = 'direct', id_name = 'direct')
 			d.addErrback(self._on_update_err, msg = 'Error updating direct messages timeline')
-			
+
 			self.db.commit(cn)
 		except Exception, err:
 			logging.exception('Error while updating timelines: %s', err)
 			self.db.rollback(cn)
-	
-	
+
+
 	def activate(self):
 		logging.debug('Twitter is active %s %s', self.name, self.settings)
 		self.twitter = None
@@ -130,7 +131,7 @@ class TwitterPlugin(plugin.Plugin):
 			messages.add_column('type')
 			#messages.add_column('retweet_of')
 			self.db.add_table(messages)
-			
+
 			ids = database.Table('ids')
 			ids.add_id('id')
 			ids.add_column('name')
@@ -149,10 +150,53 @@ class TwitterPlugin(plugin.Plugin):
 	def deactivate(self):
 		logging.debug('Twitter %s is stopped', self.name)
 		self.refresh_task.stop()
-		
+
 	def setting_changed(self, name, value):
 		if name in ['login', 'password'] and not self.twitter:
 			self.init_twitter()
+
+	def new_message(self, m, connection):
+		if m.name in ['unread_messages']:
+			resp = message.response_message(m, 'unread_messages')
+			cn, c = self.db.open_cursor()
+			user = None
+			try:
+				c.execute('select id_message, sender, body, date_received, type, id_tweet from messages where unread=1 order by date_received')
+				arr = []
+				for row in c:
+					#if id and row[0]!=id:
+					#	continue
+					#if user and row[1] != user.jid:
+					#	continue
+					#ri = self.get_list_item(self.roster, row[1])
+					#if group:
+					#	if not ri or group not in ri.groups:
+					#		continue
+					#Pack message
+					mess = message.Message('message')
+					mess.set('messageid', row[0])
+					mess.set('userid', row[1])
+					mess.set('message', row[2])
+					mess.set('type', row[4])
+					id_tweet = row[5]
+					mess.set('via', self.name)
+					_time = row[3]
+					_strtime = self.time_to_iso(_time)
+					mess.set('message-date', _strtime)
+					logging.debug('tweet %s - %s', id_tweet, _strtime)
+					#if ri:
+					#	self._user_to_item(ri, mess)
+					arr.append(mess)
+				self.db.commit(cn)
+				resp.set('messages', arr)
+				self.send_back(resp, connection)
+			except Exception, err:
+				self.db.rollback(cn)
+				logging.exception('Error listing unread messages: %s', err)
+				self.send_error('Error listing unread messages', m, connection)
+			return True
+		return False
+
 
 def get_name():
 	return 'twitter'

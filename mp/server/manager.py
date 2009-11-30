@@ -296,10 +296,10 @@ def manage_networks(m, conn):
 				opt_name = m.get('name').lower()
 				opt_value = m.get('value')
 				c.execute('delete from settings where name=? and instance_id=?', (opt_name, row[0]))
+				pl = Globals.plugin_instances[plugin]
 				if opt_value:
 					logging.debug('Adding option %i, %s, %s', row[0], opt_name, opt_value)
 					c.execute('insert into settings (instance_id, name, value) values (?, ?, ?)', (row[0], opt_name, opt_value))
-					pl = Globals.plugin_instances[plugin]
 					pl.settings[opt_name] = opt_value
 					if not pl.disabled:
 						pl.setting_changed(opt_name, opt_value)
@@ -579,10 +579,13 @@ def manage_plugins(m, conn):
 
 def message_to_plugin(m, conn):
 	net = m.get('via')
+	result = False
 	if net in Globals.plugin_instances:
 		plugin = Globals.plugin_instances[net]
 		if not plugin.disabled:
-			plugin.new_message(m, conn)
+			result = plugin.new_message(m, conn)
+	if not result:
+		report_error(m, conn, 'Command isn\'t supported by plugin')
 
 def get_data_from_plugins(mess, c, field, default = []):
 	uu = {}
@@ -611,6 +614,36 @@ def get_data_from_plugin(net_id, mess, c):
 		if len(lc.messages)>0:
 			return lc.messages[0]
 	return None
+
+
+def manage_status(m, conn):
+	for id in Globals.plugin_instances:
+		pl = Globals.plugin_instances[id]
+		if not pl.disabled:
+			pl.new_message(m, conn)
+
+
+def manage_reply(m, conn):
+	cn, c = Globals.master.open_cursor()
+	try:
+		c.execute('select instance_id from messages where id=?', (m.get('to', -1), ))
+		r = c.fetchone()
+		if not r:
+			report_error(m, conn, 'Invalid message for reply')
+			Globals.master.commit(cn)
+			return
+		instance_id = int(r[0])
+		for id in Globals.plugin_instances:
+			pl = Globals.plugin_instances[id]
+			if pl.instance_id==instance_id and not pl.disabled:
+				pl.new_message(m, conn)
+				Globals.master.commit(cn)
+				return
+	except Exception, err:
+		logging.exception('Error while manage_reply: %s', err)
+	Globals.master.rollback(cn)
+	report_error(m, conn, 'Invalid reply, plugin not found')
+
 
 def manage_unread_users(m, conn):
 	#Collect all unread users from all plugins
@@ -719,6 +752,7 @@ def manage_mark_read(m, conn):
 		if group:
 			group = group.lower()
 		count = 0
+		messages = []
 		c2 = Globals.master.add_cursor(cn)
 		c3 = Globals.master.add_cursor(cn)
 		if user:
@@ -729,6 +763,7 @@ def manage_mark_read(m, conn):
 				mess.set('user', row[0])
 				rep = get_data_from_plugin(row[1], mess, c2)
 				if rep:
+					messages.extend(rep.get('messages', []))
 					count = count + len(rep.get('messages', []))
 		elif group:
 			c2.execute('select user_id from groups_users where group_id=?', (group, ))
@@ -739,6 +774,7 @@ def manage_mark_read(m, conn):
 					mess.set('user', row[0])
 					rep = get_data_from_plugin(row[1], mess, c3)
 					if rep:
+						messages.extend(rep.get('messages', []))
 						count = count + len(rep.get('messages', []))
 			c2.execute('select "user", "group", instance_id from groups_entries where group_id=?', (group, ))
 			for row2 in c2:
@@ -747,12 +783,14 @@ def manage_mark_read(m, conn):
 					mess.set('user', row2[0])
 					rep = get_data_from_plugin(row2[2], mess, c3)
 					if rep:
+						messages.extend(rep.get('messages', []))
 						count = count + len(rep.get('messages', []))
 				if row2[1]:#Group
 					mess = message.Message('mark_read')
 					mess.set('group', row2[1])
 					rep = get_data_from_plugin(row2[2], mess, c3)
 					if rep:
+						messages.extend(rep.get('messages', []))
 						count = count + len(rep.get('messages', []))
 		else:
 			for id in Globals.plugin_instances:
@@ -762,10 +800,11 @@ def manage_mark_read(m, conn):
 					mess = message.Message('mark_read')
 					rep = get_data_from_plugin(row[0], mess, c2)
 					if rep:
+						messages.extend(rep.get('messages', []))
 						count = count + len(rep.get('messages', []))
 
 		resp = message.response_message(m, 'mark_read')
-		resp.set('messages', count)
+		resp.set('messages', messages)
 		conn.send_message(resp)
 		Globals.master.commit(cn)
 	except Exception, err:
@@ -838,37 +877,57 @@ def process_message(message, connection):
 
 	if message.name in ['plugins']:
 		manage_plugins(message, connection)
+		return
 
 	if message.name in ['net']:
 		manage_networks(message, connection)
+		return
+
+	if message.name in ['reply']:
+		manage_reply(message, connection)
+		return
 
 	if message.get('via'):
 		message_to_plugin(message, connection)
 		return
 
+	if message.name in ['status']:
+		manage_status(message, connection)
+		return
+
 	if message.name in ['users']:
 		manage_users(message, connection)
+		return
 
 	if message.name in ['groups']:
 		manage_groups(message, connection)
+		return
 
 	if message.name in ['user']:
 		manage_user(message, connection)
+		return
 
 	if message.name in ['group']:
 		manage_group(message, connection)
+		return
 
 	if message.name in ['unread_users']:
 		manage_unread_users(message, connection)
+		return
 
 	if message.name in ['unread_groups']:
 		manage_unread_groups(message, connection)
+		return
 
 	if message.name in ['mark_read']:
 		manage_mark_read(message, connection)
+		return
 
 	if message.name in ['unread_messages']:
 		manage_unread_messages(message, connection)
+		return
+		
+	report_error(message, connection, 'Invalid command')
 
 
 def client_connected(connection):

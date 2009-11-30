@@ -28,7 +28,13 @@ class Cmd(basic.LineReceiver):
 			except Exception, err:
 				pass
 			return
-
+		is_num = 0
+		try:
+			is_num = int(line)
+		except:
+			pass
+		if is_num>0:
+			line = 'reply to %s' % line
 		#Just command - split and send
 		arr = line.split()
 		if len(arr) == 0:
@@ -123,6 +129,7 @@ class Cmd(basic.LineReceiver):
 			self.message = m
 			self.valueField = 'message'
 			self.value = []
+			print_line('End message with empty line')
 			return True
 
 		try:
@@ -154,7 +161,7 @@ def gmt_iso_to_str(iso):
 	current = datetime.datetime.fromtimestamp(time.mktime(time.gmtime()))
 	current = current + delta
 	parsed = current
-	
+
 	try:
 		p = datetime.datetime.strptime(iso, '%Y-%m-%dT%H:%M:%S')
 		parsed = p + delta
@@ -181,15 +188,21 @@ def gmt_iso_to_str(iso):
 		pass
 	return parsed.strftime(format)
 
-def print_message(m, _from):
+def print_message(m):
+	status = ''
+	if m.get('status'):
+		status = '[%s]' % m.get('status')
 	_sender = m.get('user', m.get('userid', ''))
+	_from = m.get('via')
+	if _from:
+		_from = '[%s]' % _from
 	if _sender:
-		_sender = ' from %s' % _sender
+		_sender = ' %s%s' % (status, _sender)
 	_id = m.get('messageid')
 	_date = gmt_iso_to_str(m.get('message-date'))
 	if _id:
-		_id = '#%s ' % _id
-	print_line('%s%s%s Message%s: %s' % (_from, _id, _date, _sender, m.get('message')), 'green')
+		_id = ' #%s ' % _id
+	print_line('%s%s%s%s: %s' % (_from, _id, _date, _sender, m.get('message')), 'green')
 
 def process_message(message, connection):
 	#logging.debug('Message %s from %s', message.name, message.get('from'))
@@ -299,7 +312,7 @@ def process_message(message, connection):
 	if 'unread_messages' == message.name:
 		print_line(u'%sUnread messages:' % _from)
 		for mess in sorted(message.get('messages', []), sort_messages):
-			print_message(mess, _from)
+			print_message(mess)
 
 	if 'mark_read' == message.name:
 		print_line(u'%sMarked as read %i messages:' % (_from, len(message.get('messages', []))))
@@ -327,7 +340,7 @@ def process_message(message, connection):
 		print_line('%sComplete: %s' % (_from, message.get('text', '')))
 
 	if 'message' == message.name:
-		print_message(message, _from)
+		print_message(message)
 
 def client_connected(connection):
 	logging.debug('Connection established, show prompt')

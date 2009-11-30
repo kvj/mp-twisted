@@ -11,6 +11,7 @@ import urllib
 import mimetypes
 import mimetools
 import logging
+from mp.network import http
 
 from lib import oauth, txml
 
@@ -24,13 +25,13 @@ BASE_URL="http://twitter.com"
 SEARCH_URL="http://search.twitter.com/search.atom"
 
 class EntryCollect:
-	
+
 	def __init__(self):
 		self.entries = []
-		
+
 	def on_entry(self, entry):
 		self.entries.append(entry)
-	
+
 	def on_finish(self, data):
 		return self.entries
 
@@ -52,14 +53,14 @@ class Twitter(object):
 			self.use_auth = True
 			self.username = user
 			self.password = passwd
-		
+
 		if consumer and token:
 			self.use_auth = True
 			self.use_oauth = True
 			self.consumer = consumer
 			self.token = token
 			self.signature_method = signature_method
-		  
+
 
 	def __makeOAuthHeader(self, method, url, parameters={}, headers={}):
 		oauth_request = oauth.OAuthRequest.from_consumer_and_token(self.consumer,
@@ -128,7 +129,7 @@ class Twitter(object):
 		else:
 			headers = self._makeAuthHeader(h)
 
-		return client.getPage(url, method='POST',
+		return http.getPage(url, method='POST',
 			agent=self.agent,
 			postdata=body, headers=headers)
 
@@ -142,7 +143,7 @@ class Twitter(object):
 		else:
 			headers = self._makeAuthHeader(headers)
 
-		return client.getPage(url, method='POST',
+		return http.getPage(url, method='POST',
 			agent=self.agent,
 			postdata=self._urlencode(args), headers=headers)
 
@@ -159,7 +160,7 @@ class Twitter(object):
 		else:
 			headers = {}
 
-		return client.downloadPage(url, feed_factory(delegate, extra_args),
+		return http.downloadPage(url, feed_factory(delegate, extra_args),
 			agent=self.agent, headers=headers)
 
 	def verify_credentials(self):
@@ -200,7 +201,7 @@ class Twitter(object):
 
 	def home_timeline(self, delegate = None, params={}, extra_args=None):
 		"""Get updates from friends.
-		
+
 		Calls the delgate once for each status object received."""
 		return self._get_list('/statuses/home_timeline.xml', delegate, params, extra_args)
 
@@ -299,10 +300,10 @@ class Twitter(object):
 				h = self._makeAuthHeader()
 		else:
 			h = {}
-		
+
 		client.downloadPage(url, txml.Users(lambda u: d.callback(u)),
 			headers=h).addErrback(lambda e: d.errback(e))
-		
+
 		return d
 
 	def search(self, query, delegate, args=None, extra_args=None):
