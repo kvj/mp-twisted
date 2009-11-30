@@ -96,6 +96,9 @@ class Plugin:
 
 	def new_message(self, message, connection):
 		return False
+		
+	def fill_status(self, message):
+		pass
 
 	def send_back(self, message, connection):
 		manager.deliver_message(self, message, connection)

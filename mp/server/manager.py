@@ -321,9 +321,18 @@ def manage_networks(m, conn):
 			report_error(m, conn, 'Error processing entry options')
 		return
 	resp = message.response_message(m, 'networks')
+	arr = []
 	for name in Globals.plugin_instances.keys():
 		instance = Globals.plugin_instances[name]
-		resp.set(instance.name, instance.type)
+		entry = message.Message('network')
+		entry.set('name', instance.name)
+		entry.set('type', instance.type)
+		if not instance.disabled:
+			instance.fill_status(entry)
+		else:
+			entry.set('disabled', 'yes')
+		arr.append(entry)
+	resp.set('networks', arr)
 	conn.send_message(resp)
 
 def manage_user(m, conn):

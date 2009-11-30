@@ -254,6 +254,12 @@ class JabberPlugin(plugin.Plugin):
 			return 'offline'
 		return show
 
+	def fill_status(self, message):
+		message.set('priority', self.priority)
+		message.set('show', self._show_to_status(self.show))
+		if self.status:
+			message.set('status', self.status)
+		
 	def _get_item_state(self, jidstr):
 		_jid = jid.JID(jidstr)
 		userhost = _jid.userhost().lower()
@@ -376,6 +382,8 @@ class JabberPlugin(plugin.Plugin):
 				self.priority = int(m.get('priority'))
 			if m.get('status'):
 				self.status = m.get('status')
+				if self.status in ['""', '""']:
+					self.status = None
 			if self.connected:
 				self.send_presence(self.show, self.priority, self.status)
 			else:

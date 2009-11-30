@@ -213,8 +213,13 @@ def process_message(message, connection):
 
 	if 'networks' == message.name:
 		print_line('Active networks:')
-		for key in message.keys():
-			print_line('%10s: %s' % (key, message.get(key, '')))
+		for net in message.get('networks', []):
+			for key in net.keys():
+				arr = []
+				arr.append(net.get('type'))
+				if key not in ['type', 'name']:
+					arr.append('%s: %s' % (key, net.get(key)))
+			print_line('%10s: %s' % (net.get('name'), u', '.join(arr)))
 
 	if 'options' == message.name:
 		print_line('Plugin options:')
