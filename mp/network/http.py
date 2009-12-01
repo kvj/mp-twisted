@@ -72,15 +72,37 @@ def proxifyFactory(factory, host, port, use_ssl = False):
 def downloadPage(url, file, *args, **kwargs):
 	factoryFactory = lambda url, *a, **kw: client.HTTPDownloader(url, file, *a, **kw)
 	proxyFactoryFactory = lambda url, *a, **kw: ProxyHTTPDownloader(url, file, *a, **kw)
-	return getPage(url, factoryFactory, proxyFactoryFactory, *args, **kwargs)
-
-def getPage(url, factoryFactory = client.HTTPClientFactory, proxyFactoryFactory = ProxyHTTPClientFactory,*args, **kwargs):
 	if not proxy_host or not proxy_port:
-		logging.debug('No proxy information - default behaviour')
+		#logging.debug('No proxy information - default behaviour')
+		return client.downloadPage(url, file, *args, **kwargs)
+	scheme, host, port, path = client._parse(url)
+	if scheme == 'https':
+		#logging.debug('Proxy and HTTPS - connect via new class')
+		http_factory = factoryFactory(url, followRedirect = 0, *args, **kwargs)
+		https_factory = https.ProxyHTTPSConnectionFactory(http_factory, host, port, True, proxy_user, proxy_pass)
+		reactor.connectTCP(proxy_host, proxy_port, https_factory)
+		return http_factory.deferred
+
+	if 'headers' in kwargs:
+		headers = kwargs['headers']
+	else:
+		headers = {}
+	if proxy_user and proxy_pass:
+		auth = base64.encodestring("%s:%s" %(proxy_user, proxy_pass))
+		headers['Proxy-Authorization'] = 'Basic %s' % (auth.strip())
+		#logging.debug('Adding header: %s', headers['Proxy-Authorization'])
+		kwargs['headers'] = headers
+	factory = proxyFactoryFactory(url, proxy_host, proxy_port, followRedirect = 0, *args, **kwargs)
+	reactor.connectTCP(proxy_host, proxy_port, factory)
+	return factory.deferred
+
+def getPage(url, factoryFactory = client.HTTPClientFactory, proxyFactoryFactory = ProxyHTTPClientFactory, *args, **kwargs):
+	if not proxy_host or not proxy_port:
+		#logging.debug('No proxy information - default behaviour')
 		return client.getPage(url, *args, **kwargs)
 	scheme, host, port, path = client._parse(url)
 	if scheme == 'https':
-		logging.debug('Proxy and HTTPS - connect via new class')
+		#logging.debug('Proxy and HTTPS - connect via new class')
 		http_factory = factoryFactory(url, followRedirect = 0, *args, **kwargs)
 		https_factory = https.ProxyHTTPSConnectionFactory(http_factory, host, port, True, proxy_user, proxy_pass)
 		reactor.connectTCP(proxy_host, proxy_port, https_factory)

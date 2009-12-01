@@ -56,7 +56,7 @@ class Message:
 
 
 	def to_xml(self, internal = False):
-		result = Element(('', self.name))
+		result = Element(('', self._to_value(self.name)))
 		result['type'] = 'message'
 		if not internal:
 			if self.id:
@@ -75,7 +75,7 @@ class Message:
 				result.addChild(value.to_xml(True))
 			else:
 				if value:
-					result.addElement(field, content = self._to_value(value))
+					result.addElement(self._to_value(field), content = self._to_value(value))
 		if internal:
 			return result
 		return result.toXml()

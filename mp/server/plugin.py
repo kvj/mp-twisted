@@ -62,10 +62,15 @@ class Plugin:
 		else:
 			manager.deliver_message(self, m)
 
-	def send_progress(self, error_message):
+	def send_progress(self, error_message, in_reply = None, in_connection = None):
 		m = message.Message('progress')
 		m.set('text', error_message)
-		manager.deliver_message(self, m)
+		if in_reply and in_reply.id:
+			m.id = in_reply.id
+		if in_connection:
+			in_connection.send_message(m)
+		else:
+			manager.deliver_message(self, m)
 
 	def send_message(self, message):
 		manager.deliver_message(self, message)
@@ -87,7 +92,7 @@ class Plugin:
 				return True
 			return False
 		return default
-	
+
 	def setting_changed(self, name, value):
 		pass
 
@@ -96,7 +101,7 @@ class Plugin:
 
 	def new_message(self, message, connection):
 		return False
-		
+
 	def fill_status(self, message):
 		pass
 

@@ -30,7 +30,7 @@ class BaseXMLHandler(object):
 		elif name in self.SIMPLE_PROPS:
 			pass
 		else:
-			print "Got unknown tag", name, "in", self.__class__
+			#print "Got unknown tag", name, "in", self.__class__
 			self.current_ob = NoopParser(name)
 
 	def gotTagEnd(self, name, data):
@@ -97,6 +97,8 @@ class Parser(sux.XMLParser):
 
 	toplevel_tag = 'entry'
 	toplevel_type = None
+	simple_tags = {}
+
 
 	"""A file-like thingy that parses a friendfeed feed with SUX."""
 	def __init__(self, delegate, extra_args=None):
@@ -106,6 +108,7 @@ class Parser(sux.XMLParser):
 		self.connectionMade()
 		self.currentEntry=None
 		self.data=[]
+		self.current_simple_tag = None
 	def write(self, b):
 		self.dataReceived(b)
 	def close(self):
@@ -122,6 +125,9 @@ class Parser(sux.XMLParser):
 			self.currentEntry = self.toplevel_type(name)
 		elif self.currentEntry:
 			self.currentEntry.gotTagStart(name, attrs)
+		else:
+			if name in self.simple_tags:
+				self.current_simple_tag = name
 
 	def gotTagEnd(self, name):
 		if name == self.toplevel_tag:
@@ -134,6 +140,10 @@ class Parser(sux.XMLParser):
 			self.currentEntry = None
 		elif self.currentEntry:
 			self.currentEntry.gotTagEnd(name, u''.join(self.data))
+		else:
+			if name == self.current_simple_tag:
+				self.simple_tags[name] = u''.join(self.data)
+				self.current_simple_tag = None
 
 	def gotText(self, data):
 		self.data.append(data)
@@ -175,6 +185,12 @@ class StatusList(Parser):
 
 	toplevel_tag = 'status'
 	toplevel_type = Status
+
+class UserList(Parser):
+
+	toplevel_tag = 'user'
+	toplevel_type = User
+	simple_tags = {'next_cursor': None, 'previous_cursor': None}
 
 class HoseFeed(Parser):
 

@@ -86,6 +86,8 @@ class Cmd(basic.LineReceiver):
 			m.name = 'unread_messages'
 		if m.name in ['r']:
 			m.name = 'mark_read'
+		if m.name in ['un']:
+			m.name = 'unread_networks'
 
 
 		if len(arr) >= 4 and arr[0] == 'net' and arr[1] == 'opt':
@@ -188,12 +190,12 @@ def gmt_iso_to_str(iso):
 		pass
 	return parsed.strftime(format)
 
-def print_message(m):
+def print_message(m, _from = ''):
 	status = ''
 	if m.get('status'):
 		status = '[%s]' % m.get('status')
 	_sender = m.get('user', m.get('userid', ''))
-	_from = m.get('via')
+	_from = m.get('via', _from)
 	if _from:
 		_from = '[%s]' % _from
 	if _sender:
@@ -214,12 +216,17 @@ def process_message(message, connection):
 	if 'networks' == message.name:
 		print_line('Active networks:')
 		for net in message.get('networks', []):
+			arr = []
+			arr.append(net.get('type'))
 			for key in net.keys():
-				arr = []
-				arr.append(net.get('type'))
 				if key not in ['type', 'name']:
 					arr.append('%s: %s' % (key, net.get(key)))
 			print_line('%10s: %s' % (net.get('name'), u', '.join(arr)))
+
+	if 'unread_networks' == message.name:
+		print_line('Unread networks:')
+		for net in message.get('networks', []):
+			print_line('%10s: %s' % (net.get('name'), net.get('count')))
 
 	if 'options' == message.name:
 		print_line('Plugin options:')
@@ -317,7 +324,7 @@ def process_message(message, connection):
 	if 'unread_messages' == message.name:
 		print_line(u'%sUnread messages:' % _from)
 		for mess in sorted(message.get('messages', []), sort_messages):
-			print_message(mess)
+			print_message(mess, message.get('net', ''))
 
 	if 'mark_read' == message.name:
 		print_line(u'%sMarked as read %i messages:' % (_from, len(message.get('messages', []))))
@@ -345,7 +352,7 @@ def process_message(message, connection):
 		print_line('%sComplete: %s' % (_from, message.get('text', '')))
 
 	if 'message' == message.name:
-		print_message(message)
+		print_message(message, message.get('net', ''))
 
 def client_connected(connection):
 	logging.debug('Connection established, show prompt')

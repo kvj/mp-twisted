@@ -688,6 +688,34 @@ def manage_unread_users(m, conn):
 		logging.exception('Error while manage_unread_users: %s', err)
 		report_error(m, conn, 'Error while listing unread users')
 
+def manage_unread_networks(m, conn):
+	cn, c = Globals.master.open_cursor()
+	try:
+		mess = message.Message('unread_messages')
+		um = get_data_from_plugins(mess, c, 'messages', [])
+		arr = []
+		for id in Globals.plugin_instances:
+			pl = Globals.plugin_instances[id]
+			#logging.debug('un: %s, %s, %s', id, pl.disabled, um)
+			if pl.disabled or pl.instance_id not in um:
+				continue
+			net, marr = um[pl.instance_id]
+			if len(marr)<1:
+				continue
+			n = message.Message('net')
+			n.set('name', id)
+			n.set('count', len(marr))
+			arr.append(n)
+		resp = message.response_message(m, 'unread_networks')
+		resp.set('networks', arr)
+		conn.send_message(resp)
+		Globals.master.commit(cn)
+	except Exception, err:
+		Globals.master.rollback(cn)
+		logging.exception('Error while manage_unread_networks: %s', err)
+		report_error(m, conn, 'Error while listing unread networks')
+
+
 def manage_unread_messages(m, conn):
 	#Collect all unread users from all plugins
 	cn, c = Globals.master.open_cursor()
@@ -737,10 +765,9 @@ def manage_unread_messages(m, conn):
 						for mess in arr:
 							messages.append(mess)
 		else:
-			for id in um:
-				net, arr = um[id]
-				for mess in arr:
-					messages.append(mess)
+			report_error(m, conn, 'Please specify user or group')
+			Globals.master.commit(cn)
+			return
 
 		resp = message.response_message(m, 'unread_messages')
 		resp.set('messages', messages)
@@ -802,15 +829,9 @@ def manage_mark_read(m, conn):
 						messages.extend(rep.get('messages', []))
 						count = count + len(rep.get('messages', []))
 		else:
-			for id in Globals.plugin_instances:
-				c.execute('select id from instances where name=?', (id, ))
-				row = c.fetchone()
-				if row:
-					mess = message.Message('mark_read')
-					rep = get_data_from_plugin(row[0], mess, c2)
-					if rep:
-						messages.extend(rep.get('messages', []))
-						count = count + len(rep.get('messages', []))
+			report_error(m, conn, 'Please specify user or group')
+			Globals.master.commit(cn)
+			return
 
 		resp = message.response_message(m, 'mark_read')
 		resp.set('messages', messages)
@@ -896,6 +917,10 @@ def process_message(message, connection):
 		manage_reply(message, connection)
 		return
 
+	if message.name in ['unread_networks']:
+		manage_unread_networks(message, connection)
+		return
+
 	if message.get('via'):
 		message_to_plugin(message, connection)
 		return
@@ -935,7 +960,7 @@ def process_message(message, connection):
 	if message.name in ['unread_messages']:
 		manage_unread_messages(message, connection)
 		return
-		
+
 	report_error(message, connection, 'Invalid command')
 
 

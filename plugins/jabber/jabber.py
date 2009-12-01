@@ -259,7 +259,7 @@ class JabberPlugin(plugin.Plugin):
 		message.set('show', self._show_to_status(self.show))
 		if self.status:
 			message.set('status', self.status)
-		
+
 	def _get_item_state(self, jidstr):
 		_jid = jid.JID(jidstr)
 		userhost = _jid.userhost().lower()
@@ -357,7 +357,7 @@ class JabberPlugin(plugin.Plugin):
 			res.append('%x' % el)
 		return ''.join(res)
 
-	def send_xmpp_message(self, jid, text, thread = None):
+	def send_xmpp_message(self, m, conn, jid, text, thread = None):
 		logging.debug('Sending message to %s: %s', jid, text)
 		m = Element((self.stream.namespace, 'message'))
 		m['to'] = jid
@@ -370,7 +370,9 @@ class JabberPlugin(plugin.Plugin):
 			m.addElement((self.stream.namespace, 'body'), content = text)
 		try:
 			self.stream.send(m)
+			self.send_progress('Message sent', m, conn)
 		except:
+			self.send_error('Message sent failed', m, conn)
 			logging.error('Error sending message')
 
 
@@ -534,7 +536,7 @@ class JabberPlugin(plugin.Plugin):
 				userjid = item.jid
 			else:
 				self.send_progress('Sending message to unknown user %s' % userjid)
-			self.send_xmpp_message(userjid, m.get('message'))
+			self.send_xmpp_message(m, connection, userjid, m.get('message'))
 			return True
 
 		if m.name in ['reply']:
@@ -544,7 +546,7 @@ class JabberPlugin(plugin.Plugin):
 				c.execute('select jid, thread from messages where id_message=?', (m.get('to', -1), ))
 				r = c.fetchone()
 				if r:
-					self.send_xmpp_message(r[0], m.get('message'), r[1])
+					self.send_xmpp_message(m, connection, r[0], m.get('message'), r[1])
 					c.execute('update messages set unread=0 where id_message=?', (m.get('to', -1), ))
 				else:
 					self.send_error('Message to reply isn\'t found', m, connection)

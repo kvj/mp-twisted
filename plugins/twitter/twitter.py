@@ -12,13 +12,23 @@ class TwitterPlugin(plugin.Plugin):
 
 	UPDATE_INTERVAL = 30
 
+	def _on_users_come(self, arr):
+		logging.debug('Users are here: %s', len(arr))
+		pass
+
+	def _update_users(self):
+		d = self.twitter.friends2()
+		d.addCallback(self._on_users_come)
+		d.addErrback(self._on_update_err, 'Error fetching users')
+
 	def init_twitter(self):
 		tw = twitter.Twitter(self.get_setting('login'), self.get_setting('password'))
 		d = tw.verify_credentials()
 		def ok(result):
-			logging.debug('Complete %s %s', tw, result)
+			logging.debug('Complete init_twitter')
 			self.twitter = tw
 			self._update_tline()
+			self._update_users()
 		def err(err):
 			logging.error('Error %s', err)
 			self.send_error('Can\'t connect to twitter')
@@ -40,7 +50,7 @@ class TwitterPlugin(plugin.Plugin):
 		self.send_error(msg)
 
 	def _on_update_ok(self, arr, type = None, id_name = None):
-		logging.debug('Update complete %s, %s', type, len(arr))
+		#logging.debug('Update complete %s, %s', type, len(arr))
 		if len(arr) == 0:
 			return
 		cn, c = self.db.open_cursor()
@@ -58,7 +68,7 @@ class TwitterPlugin(plugin.Plugin):
 					_id = entry.id
 					_date = time.strptime(entry.created_at, '%a %b %d %H:%M:%S +0000 %Y')
 					_time = time.mktime(_date)
-					logging.debug('Entry %s, %s, %s', _id, entry.created_at, entry.in_reply_to_status_id)
+					#logging.debug('Entry %s, %s, %s', _id, entry.created_at, entry.in_reply_to_status_id)
 					c.execute('select id_message from messages where id_tweet=?', (_id, ))
 					r = c.fetchone()
 					if not r:
@@ -66,6 +76,7 @@ class TwitterPlugin(plugin.Plugin):
 						c.execute('insert into messages (id_message, id_tweet, sender, date_received, body, type, in_reply) values (?, ?, ?, ?, ?, ?, ?)', (message_id, _id, _sender, _time, entry.text, type, entry.in_reply_to_status_id))
 					else:
 						message_id = r[0]
+						continue
 					m = message.Message('message')
 					m.set('messageid', message_id)
 					m.set('userid', _sender)
@@ -82,31 +93,28 @@ class TwitterPlugin(plugin.Plugin):
 			self.db.rollback(cn)
 			logging.exception('Error while saving timeline')
 
+	def _start_update(self, id, err_msg, method, type = None, id_name = None):
+		#logging.debug('_start_update %s = %s', id_name, id)
+		params = {'since_id': id}
+		d = method(params = params)
+		d.addCallback(self._on_update_ok, type = type, id_name = id_name)
+		d.addErrback(self._on_update_err, err_msg)
+
+
 	def _update_tline(self):
 		if not self.twitter:
 			return
-		logging.debug('Updating tline here:')
+		#logging.debug('Updating tline here:')
 		cn, c = self.db.open_cursor()
 		try:
-			#c.execute('delete from messages')
+			#c.execute('delete from ids')
 			id = self._get_last_id('tweet', c)
-			#id = 6165489157
 			repl = self._get_last_id('replies', c)
-			#repl = None
 			direct = self._get_last_id('direct', c)
-			#direct = None
 
-			d = self.twitter.home_timeline(params = {'since_id': id})
-			d.addCallback(self._on_update_ok, type = 'normal', id_name = 'tweet')
-			d.addErrback(self._on_update_err, msg = 'Error updating home timeline')
-
-			d = self.twitter.replies(params = {'since_id': repl})
-			d.addCallback(self._on_update_ok, type = 'reply', id_name = 'replies')
-			d.addErrback(self._on_update_err, msg = 'Error updating replies timeline')
-
-			d = self.twitter.direct_messages(params = {'since_id': repl})
-			d.addCallback(self._on_update_ok, type = 'direct', id_name = 'direct')
-			d.addErrback(self._on_update_err, msg = 'Error updating direct messages timeline')
+			self._start_update(id, 'Error updating home timeline', self.twitter.home_timeline, 'normal', 'tweet')
+			self._start_update(repl, 'Error updating replies timeline', self.twitter.replies, 'reply', 'replies')
+			self._start_update(direct, 'Error updating direct messages timeline', self.twitter.direct_messages, 'direct', 'direct')
 
 			self.db.commit(cn)
 		except Exception, err:
@@ -143,7 +151,7 @@ class TwitterPlugin(plugin.Plugin):
 			logging.exception('Error while verifying schema: %s', err)
 			return False
 		self.refresh_task = LoopingCall(self._update_tline)
-		self.refresh_task.start(self.UPDATE_INTERVAL)
+		self.refresh_task.start(self.get_intsetting('update_min', 1) * 60)
 		self.init_twitter()
 		return True
 
@@ -183,7 +191,7 @@ class TwitterPlugin(plugin.Plugin):
 					_time = row[3]
 					_strtime = self.time_to_iso(_time)
 					mess.set('message-date', _strtime)
-					logging.debug('tweet %s - %s', id_tweet, _strtime)
+					#logging.debug('tweet %s - %s', id_tweet, _strtime)
 					#if ri:
 					#	self._user_to_item(ri, mess)
 					arr.append(mess)
@@ -195,6 +203,30 @@ class TwitterPlugin(plugin.Plugin):
 				logging.exception('Error listing unread messages: %s', err)
 				self.send_error('Error listing unread messages', m, connection)
 			return True
+
+		if m.name in ['mark_read']:
+			cn, c = self.db.open_cursor()
+			user = None
+			try:
+				c2 = self.db.add_cursor(cn)
+				arr = []
+				c.execute('select id_message, sender from messages where unread=1')
+				for r in c:
+					#Just mark as read
+					c2.execute('update messages set unread=0 where id_message=?', (r[0], ))
+					mess = message.Message('message')
+					mess.set('messageid', r[0])
+					arr.append(mess)
+				self.db.commit(cn)
+				resp = message.response_message(m, 'mark_read')
+				resp.set('messages', arr)
+				self.send_back(resp, connection)
+			except Exception, err:
+				self.db.rollback(cn)
+				logging.exception('Error in mark_read: %s', err)
+				self.send_error('Error marking messages as read', m, connection)
+			return True
+
 		return False
 
 

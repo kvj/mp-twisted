@@ -35,6 +35,81 @@ class EntryCollect:
 	def on_finish(self, data):
 		return self.entries
 
+class CursorCollect:
+
+	def on_entry(self, entry):
+		#logging.debug('CursorCollect: on_entry %s', entry)
+		self.entries.append(entry)
+
+	def on_error(self, error):
+		#logging.debug('CursorCollect: on_error: %s', error)
+		self.defer.errback(error)
+
+	def on_finish(self, data, factory):
+		#logging.debug('CursorCollect: on_finish %s', factory.simple_tags)
+		next_cursor = factory.simple_tags['next_cursor']
+		if next_cursor not in ['0', '-1']:
+			self.params['cursor'] = next_cursor
+			self._start()
+		else:
+			#logging.debug('Stupid complete %s', len(self.entries))
+			self.defer.callback(self.entries)
+
+	def _start(self):
+		if 'cursor' not in self.params:
+			self.params['cursor'] = -1
+		d = self.twitter._get(self.url, self.on_entry, self.params, self.feed_type)
+		d.addCallback(self.on_finish, d.factory)
+		d.addErrback(self.on_error)
+
+	def __init__(self, twitter, url, params = None, feed_type = txml.StatusList):
+		self.entries = []
+		self.twitter = twitter
+		self.params = params or {}
+		self.feed_type = feed_type
+		self.url = url
+		self.defer = defer.Deferred()
+		self._start()
+
+class PageCollect(CursorCollect):
+	
+	def on_entry(self, entry):
+		#logging.debug('PageCollect: on_entry %s', entry)
+		self.entries.append(entry)
+
+	def on_error(self, error):
+		#logging.debug('PageCollect: on_error')
+		self.defer.errback(error)
+
+	def on_finish(self, data, factory):
+		dif = len(self.entries) - self.prev_count
+		#logging.debug('PageCollect: on_finish %s', dif)
+		if dif>0:
+			self.page = self.page + 1
+			self._start()
+		else:
+			#logging.debug('PageCollect complete %s', len(self.entries))
+			self.defer.callback(self.entries)
+
+	def _start(self):
+		self.prev_count = len(self.entries)
+		if self.page>1:
+			self.params['page'] = self.page
+		#logging.debug('PageCollect._start page: %s %s %s', self.url, self.page, self.params)
+		d = self.twitter._get(self.url, self.on_entry, self.params, self.feed_type)
+		d.addCallback(self.on_finish, d.factory)
+		d.addErrback(self.on_error)
+
+	def __init__(self, twitter, url, params = None, feed_type = txml.StatusList):
+		self.entries = []
+		self.twitter = twitter
+		self.params = params or {}
+		self.feed_type = feed_type
+		self.url = url
+		self.defer = defer.Deferred()
+		self.page = 1
+		self._start()
+		
 class Twitter(object):
 
 	agent="twitty twister"
@@ -147,6 +222,9 @@ class Twitter(object):
 			agent=self.agent,
 			postdata=self._urlencode(args), headers=headers)
 
+	def _get(self, path, delegate, params, feed_factory=txml.Feed, extra_args=None):
+		return self.__get(path, delegate, params, feed_factory, extra_args)
+
 	def __get(self, path, delegate, params, feed_factory=txml.Feed, extra_args=None):
 		url = self.base_url + path
 		if params:
@@ -159,9 +237,10 @@ class Twitter(object):
 				headers = self._makeAuthHeader()
 		else:
 			headers = {}
-
-		return http.downloadPage(url, feed_factory(delegate, extra_args),
-			agent=self.agent, headers=headers)
+		factory = feed_factory(delegate, extra_args)
+		d = http.downloadPage(url, factory, agent=self.agent, headers=headers)
+		d.factory = factory
+		return d
 
 	def verify_credentials(self):
 		"Verify a user's credentials."
@@ -180,6 +259,14 @@ class Twitter(object):
 			params['source'] = source
 		return self.__parsed_post(self.__post('/statuses/update.xml', params),
 			txml.parseUpdateResponse)
+
+	def friends2(self):
+		o = CursorCollect(self, '/statuses/friends.xml', feed_type = txml.UserList)
+		return o.defer
+
+	def followers2(self):
+		o = CursorCollect(self, '/statuses/followers.xml', feed_type = txml.UserList)
+		return o.defer
 
 	def friends(self, delegate, params={}, extra_args=None):
 		"""Get updates from friends.
@@ -203,7 +290,9 @@ class Twitter(object):
 		"""Get updates from friends.
 
 		Calls the delgate once for each status object received."""
-		return self._get_list('/statuses/home_timeline.xml', delegate, params, extra_args)
+		o = PageCollect(self, '/statuses/home_timeline.xml', params = params, feed_type = txml.StatusList)
+		return o.defer
+		#return self._get_list('/statuses/home_timeline.xml', delegate, params, extra_args)
 
 	def user_timeline(self, delegate, user=None, params={}, extra_args=None):
 		"""Get the most recent updates for a user.
@@ -228,13 +317,17 @@ class Twitter(object):
 
 		Search results are returned one message at a time a DirectMessage
 		objects"""
-		return self._get_list('/direct_messages.xml', delegate, params, extra_args, feed_type = txml.Direct)
+		o = PageCollect(self, '/direct_messages.xml', params = params, feed_type = txml.Direct)
+		return o.defer
+		#return self._get_list('/direct_messages.xml', delegate, params, extra_args, feed_type = txml.Direct)
 
 	def replies(self, delegate = None, params={}, extra_args=None):
 		"""Get the most recent replies for the authenticating user.
 
 		See search for example of how results are returned."""
-		return self._get_list('/statuses/mentions.xml', delegate, params, extra_args)
+		o = PageCollect(self, '/statuses/mentions.xml', params = params, feed_type = txml.StatusList)
+		return o.defer
+		#return self._get_list('/statuses/mentions.xml', delegate, params, extra_args)
 
 	def follow(self, user):
 		"""Follow the given user.
