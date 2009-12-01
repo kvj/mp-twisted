@@ -84,7 +84,7 @@ class PageCollect(CursorCollect):
 	def on_finish(self, data, factory):
 		dif = len(self.entries) - self.prev_count
 		#logging.debug('PageCollect: on_finish %s', dif)
-		if dif>0:
+		if dif>0 and 'since_id' in self.params and self.params['since_id']:
 			self.page = self.page + 1
 			self._start()
 		else:

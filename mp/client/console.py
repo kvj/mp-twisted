@@ -327,7 +327,7 @@ def process_message(message, connection):
 			print_message(mess, message.get('net', ''))
 
 	if 'mark_read' == message.name:
-		print_line(u'%sMarked as read %i messages:' % (_from, len(message.get('messages', []))))
+		print_line(u'%sMarked messages as read: %i' % (_from, len(message.get('messages', []))))
 
 	if 'group' == message.name:
 		print_line('%sGroup details:' % (_from))

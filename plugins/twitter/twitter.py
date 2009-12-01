@@ -47,10 +47,11 @@ class TwitterPlugin(plugin.Plugin):
 		c.execute('insert into ids (name, last_id) values (?, ?)', (name.lower(), id))
 
 	def _on_update_err(self, error, msg = None):
+		logging.debug('We have error: %s', msg)
 		self.send_error(msg)
 
 	def _on_update_ok(self, arr, type = None, id_name = None):
-		#logging.debug('Update complete %s, %s', type, len(arr))
+		logging.debug('Update complete %s, %s', type, len(arr))
 		if len(arr) == 0:
 			return
 		cn, c = self.db.open_cursor()
