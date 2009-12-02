@@ -41,7 +41,7 @@ class Cmd(basic.LineReceiver):
 			if self.multiLine:
 				#Send message here
 				try:
-					self.message.set(self.valueField, u'\n'.join(self.value))
+					self.message.set(self.valueField, '\n'.join(self.value))
 					send_message(self.connection, self.message)
 				except Exception, err:
 					logging.exception('Error sending message: %s', err)
