@@ -49,6 +49,7 @@ class Cmd(basic.LineReceiver):
 			return False
 		if self.multiLine:
 			#Save line
+			logging.debug('Add line %s %s', line, line.__class__)
 			self.value.append(line)
 			return True
 
