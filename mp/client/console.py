@@ -50,7 +50,7 @@ class Cmd(basic.LineReceiver):
 		if self.multiLine:
 			#Save line
 			logging.debug('Add line %s %s', line, line.__class__)
-			self.value.append(line)
+			self.value.append(unicode(line))
 			return True
 
 		m = message.Message(arr[0])
