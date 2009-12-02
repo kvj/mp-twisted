@@ -93,6 +93,12 @@ class User(BaseXMLHandler):
 
 Status.COMPLEX_PROPS = {'user': User}
 
+class List(BaseXMLHandler):
+
+	SIMPLE_PROPS = ['id', 'name', 'full_name', 'slug', 'subscriber_count', 'member_count',
+					'uri', 'mode']
+	COMPLEX_PROPS = {'user': User}
+
 class Parser(sux.XMLParser):
 
 	toplevel_tag = 'entry'
@@ -190,6 +196,12 @@ class UserList(Parser):
 
 	toplevel_tag = 'user'
 	toplevel_type = User
+	simple_tags = {'next_cursor': None, 'previous_cursor': None}
+
+class ListList(Parser):
+
+	toplevel_tag = 'list'
+	toplevel_type = List
 	simple_tags = {'next_cursor': None, 'previous_cursor': None}
 
 class HoseFeed(Parser):

@@ -10,25 +10,77 @@ from lib import twitter
 
 class TwitterPlugin(plugin.Plugin):
 
-	UPDATE_INTERVAL = 30
+	def _user_to_item(self, item, entry = None):
+		if not entry:
+			entry = message.Message('entry')
+		entry.set('userid', item['id'])
+		entry.set('user', item['name'])
+		entry.set('net', self.name)
+		return entry
 
-	def _on_users_come(self, arr):
+	def _on_users_come(self, arr, m = None, conn = None):
 		logging.debug('Users are here: %s', len(arr))
+		self.users.clear()
+		for user in arr:
+			u = {}
+			u['id'] = user.screen_name
+			u['name'] = user.name
+			self.users[user.screen_name] = u
+
+
+	def _update_users(self, m = None, conn = None):
+		d = self.twitter.friends2()
+		d.addCallback(self._on_users_come, m, conn)
+		d.addErrback(self._on_update_err, 'Error fetching users', m, conn)
+
+	def _update_group(self, group):
 		pass
 
-	def _update_users(self):
-		d = self.twitter.friends2()
-		d.addCallback(self._on_users_come)
-		d.addErrback(self._on_update_err, 'Error fetching users')
+	def _on_groups_come(self, arr, m = None, conn = None, ok_message = None):
+		#logging.debug('Groups: %s', len(arr))
+		for item in arr:
+			g = {}
+			g['id'] = u'/'.join(reversed(item.uri.split('/')[1:]))
+			g['list_id'] = item.uri
+			g['group'] = item.uri
+			g['group_id'] = item.id
+			g['members'] = {}
+			logging.debug('List: %s, %s', g['id'], g['group'])
+			self.groups[g['id']] = g
+			self._update_group(g)
+		if ok_message:
+			self.send_ok(ok_message, m, conn)
+
+	def _on_group_del(self, arr, m = None, conn = None, ok_message = None):
+		for item in arr:
+			if item.uri in self.groups:
+				del self.groups[item.uri]
+		if ok_message:
+			self.send_ok(ok_message, m, conn)
+		self._update_lists()
+
+	def _update_lists(self, m = None, conn = None):
+		self.groups.clear()
+		d = self.twitter.lists(self.user_id)
+		d.addCallback(self._on_groups_come, m, conn)
+		d.addErrback(self._on_update_err, 'Error fetching lists', m, conn)
+		d = self.twitter.lists_subscriptions(self.user_id)
+		d.addCallback(self._on_groups_come, m, conn)
+		d.addErrback(self._on_update_err, 'Error fetching lists', m, conn)
+
 
 	def init_twitter(self):
 		tw = twitter.Twitter(self.get_setting('login'), self.get_setting('password'))
 		d = tw.verify_credentials()
-		def ok(result):
-			logging.debug('Complete init_twitter')
+		def ok(arr):
+			self.user_id = arr[0].id
+			logging.debug('Complete init_twitter %s', arr[0].id)
 			self.twitter = tw
+			self.users = {}
+			self.groups = {}
 			self._update_tline()
 			self._update_users()
+			self._update_lists()
 		def err(err):
 			logging.error('Error %s', err)
 			self.send_error('Can\'t connect to twitter')
@@ -46,9 +98,9 @@ class TwitterPlugin(plugin.Plugin):
 		c.execute('delete from ids where name=?', (name.lower(), ))
 		c.execute('insert into ids (name, last_id) values (?, ?)', (name.lower(), id))
 
-	def _on_update_err(self, error, msg = None):
-		logging.debug('We have error: %s', msg)
-		self.send_error(msg)
+	def _on_update_err(self, error, msg = None, m = None, conn = None):
+		logging.error('We have error: %s', error)
+		self.send_error(msg, m, conn)
 
 	def _on_update_ok(self, arr, type = None, id_name = None):
 		logging.debug('Update complete %s, %s', type, len(arr))
@@ -81,6 +133,8 @@ class TwitterPlugin(plugin.Plugin):
 					m = message.Message('message')
 					m.set('messageid', message_id)
 					m.set('userid', _sender)
+					if _sender in self.users:
+						self._user_to_item(self.users[_sender], m)
 					#m.set('user', user.name)
 					m.set('message', entry.text)
 					m.set('type', type)
@@ -185,6 +239,8 @@ class TwitterPlugin(plugin.Plugin):
 					mess = message.Message('message')
 					mess.set('messageid', row[0])
 					mess.set('userid', row[1])
+					if row[1] in self.users:
+						self._user_to_item(self.users[row[1]], mess)
 					mess.set('message', row[2])
 					mess.set('type', row[4])
 					id_tweet = row[5]
@@ -228,6 +284,48 @@ class TwitterPlugin(plugin.Plugin):
 				self.send_error('Error marking messages as read', m, connection)
 			return True
 
+		if not self.twitter:
+			return False
+
+		if m.name in ['users']:
+			#No operations yet, just show
+			a = []
+			for id in self.users:
+				a.append(self._user_to_item(self.users[id]))
+			resp = message.response_message(m, 'users')
+			resp.set('users', a)
+			self.send_back(resp, connection)
+			return True
+
+		if m.name in ['groups']:
+			#No operations yet
+			if m.get('add'):
+				gname = m.get('add')
+				d = self.twitter.add_list(self.user_id, gname)
+				d.addCallback(self._on_groups_come, m, connection, 'Group added')
+				d.addErrback(self._on_update_err, 'Error while adding group', m, connection)
+				return True
+			if m.get('del'):
+				gname = m.get('del')
+				group = self.get_list_item(self.groups, gname)
+				if not group:
+					self.send_error('Invalid group', m, connection)
+					return True
+				d = self.twitter.del_list(self.user_id, group['group_id'])
+				d.addCallback(self._on_group_del, m, connection, 'Group removed')
+				d.addErrback(self._on_update_err, 'Error while removing group', m, connection)
+				return True
+			a = []
+			for id in self.groups:
+				g = self.groups[id]
+				mess = message.Message('group')
+				mess.set('groupid', id)
+				mess.set('group', g['group'])
+				a.append(mess)
+			resp = message.response_message(m, 'groups')
+			resp.set('groups', a)
+			self.send_back(resp, connection)
+			return True
 		return False
 
 

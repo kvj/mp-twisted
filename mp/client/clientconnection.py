@@ -29,8 +29,11 @@ class ClientConnection(XmlStream):
 		self.handler.client_disconnected(self)
 
 	def send_message(self, m):
-		logging.debug('Sending %s', m.to_xml())
-		XmlStream.send(self, m.to_xml())
+		try:
+			logging.debug('Sending %s', m.to_xml())
+			XmlStream.send(self, m.to_xml())
+		except Exception, err:
+			logging.exception('Sending failed: %s', err)
 
 	def onDocumentStart(self, rootElement):
 		XmlStream.onDocumentStart(self, rootElement)

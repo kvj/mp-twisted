@@ -26,14 +26,29 @@ SEARCH_URL="http://search.twitter.com/search.atom"
 
 class EntryCollect:
 
-	def __init__(self):
-		self.entries = []
-
 	def on_entry(self, entry):
 		self.entries.append(entry)
 
-	def on_finish(self, data):
-		return self.entries
+	def on_error(self, error):
+		self.defer.errback(error)
+
+	def on_finish(self, data, factory):
+		self.defer.callback(self.entries)
+
+	def _start(self):
+		d = self.twitter._get(self.url, self.on_entry, params = self.params, feed_factory = self.feed_type, method = self.method)
+		d.addCallback(self.on_finish, d.factory)
+		d.addErrback(self.on_error)
+
+	def __init__(self, twitter, url, params = None, feed_type = txml.UserList, method = 'GET'):
+		self.entries = []
+		self.twitter = twitter
+		self.params = params or {}
+		self.feed_type = feed_type
+		self.url = url
+		self.method = method
+		self.defer = defer.Deferred()
+		self._start()
 
 class CursorCollect:
 
@@ -48,7 +63,7 @@ class CursorCollect:
 	def on_finish(self, data, factory):
 		#logging.debug('CursorCollect: on_finish %s', factory.simple_tags)
 		next_cursor = factory.simple_tags['next_cursor']
-		if next_cursor not in ['0', '-1']:
+		if next_cursor not in ['0', '-1'] and next_cursor is not None:
 			self.params['cursor'] = next_cursor
 			self._start()
 		else:
@@ -58,7 +73,7 @@ class CursorCollect:
 	def _start(self):
 		if 'cursor' not in self.params:
 			self.params['cursor'] = -1
-		d = self.twitter._get(self.url, self.on_entry, self.params, self.feed_type)
+		d = self.twitter._get(self.url, self.on_entry, params = self.params, feed_factory = self.feed_type)
 		d.addCallback(self.on_finish, d.factory)
 		d.addErrback(self.on_error)
 
@@ -72,7 +87,7 @@ class CursorCollect:
 		self._start()
 
 class PageCollect(CursorCollect):
-	
+
 	def on_entry(self, entry):
 		#logging.debug('PageCollect: on_entry %s', entry)
 		self.entries.append(entry)
@@ -96,7 +111,7 @@ class PageCollect(CursorCollect):
 		if self.page>1:
 			self.params['page'] = self.page
 		#logging.debug('PageCollect._start page: %s %s %s', self.url, self.page, self.params)
-		d = self.twitter._get(self.url, self.on_entry, self.params, self.feed_type)
+		d = self.twitter._get(self.url, self.on_entry, params = self.params, feed_factory = self.feed_type)
 		d.addCallback(self.on_finish, d.factory)
 		d.addErrback(self.on_error)
 
@@ -109,7 +124,7 @@ class PageCollect(CursorCollect):
 		self.defer = defer.Deferred()
 		self.page = 1
 		self._start()
-		
+
 class Twitter(object):
 
 	agent="twitty twister"
@@ -208,7 +223,7 @@ class Twitter(object):
 			agent=self.agent,
 			postdata=body, headers=headers)
 
-	def __post(self, path, args={}):
+	def _post(self, path, delegate, method='POST', args={}, feed_factory=txml.Feed):
 		headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'}
 
 		url = self.base_url + path
@@ -217,17 +232,14 @@ class Twitter(object):
 			headers = self.__makeOAuthHeader('POST', url, args, headers)
 		else:
 			headers = self._makeAuthHeader(headers)
-
+		factory = feed_factory(delegate)
 		return http.getPage(url, method='POST',
 			agent=self.agent,
 			postdata=self._urlencode(args), headers=headers)
 
-	def _get(self, path, delegate, params, feed_factory=txml.Feed, extra_args=None):
-		return self.__get(path, delegate, params, feed_factory, extra_args)
-
-	def __get(self, path, delegate, params, feed_factory=txml.Feed, extra_args=None):
+	def _get(self, path, delegate, params, method = 'GET', feed_factory=txml.Feed, extra_args=None):
 		url = self.base_url + path
-		if params:
+		if params and method == 'GET':
 			url += '?' + self._urlencode(params)
 
 		if self.use_auth:
@@ -238,13 +250,18 @@ class Twitter(object):
 		else:
 			headers = {}
 		factory = feed_factory(delegate, extra_args)
-		d = http.downloadPage(url, factory, agent=self.agent, headers=headers)
+		postdata = None
+		if method != 'GET':
+			postdata = self._urlencode(params)
+		d = http.downloadPage(url, factory, method = method, postdata = postdata, agent=self.agent, headers=headers)
 		d.factory = factory
 		return d
 
 	def verify_credentials(self):
 		"Verify a user's credentials."
-		return self.__get('/account/verify_credentials.xml', None, None)
+		o = CursorCollect(self, '/account/verify_credentials.xml', feed_type = txml.UserList)
+		return o.defer
+		#return self.__get('/account/verify_credentials.xml', None, None)
 
 	def __parsed_post(self, hdef, parser):
 		deferred = defer.Deferred()
@@ -257,11 +274,35 @@ class Twitter(object):
 		params={'status': status}
 		if source:
 			params['source'] = source
-		return self.__parsed_post(self.__post('/statuses/update.xml', params),
+		return self.__parsed_post(self.__post('/statuses/update.xml', args = params),
 			txml.parseUpdateResponse)
 
 	def friends2(self):
 		o = CursorCollect(self, '/statuses/friends.xml', feed_type = txml.UserList)
+		return o.defer
+
+	def lists(self, user_id):
+		o = CursorCollect(self, str('/%s/lists.xml' % user_id), feed_type = txml.ListList)
+		return o.defer
+
+	def add_list(self, user_id, list, type = 'private', description = None):
+		params = {}
+		params['name'] = list
+		if type:
+			params['mode'] = type
+		if description:
+			params['description'] = description
+		o = EntryCollect(self, str('/%s/lists.xml' % user_id), params = params, feed_type = txml.ListList, method = 'POST')
+		return o.defer
+
+	def del_list(self, user_id, list):
+		params = {}
+		params['name'] = list
+		o = EntryCollect(self, str('/%s/lists/%s.xml' % (user_id, list)), params = params, feed_type = txml.ListList, method = 'DELETE')
+		return o.defer
+
+	def lists_subscriptions(self, user_id):
+		o = CursorCollect(self, str('/%s/lists/subscriptions.xml' % user_id), feed_type = txml.ListList)
 		return o.defer
 
 	def followers2(self):
