@@ -48,6 +48,7 @@ class EntryCollect:
 		self.url = url
 		self.method = method
 		self.defer = defer.Deferred()
+		#logging.debug('url = %s, params = %s, method = %s', self.url, self.params, self.method)
 		self._start()
 
 class CursorCollect:
@@ -285,6 +286,10 @@ class Twitter(object):
 		o = CursorCollect(self, str('/%s/lists.xml' % user_id), feed_type = txml.ListList)
 		return o.defer
 
+	def list_members(self, user_id, group_id):
+		o = CursorCollect(self, str('/%s/%s/members.xml' % (user_id, group_id)), feed_type = txml.UserList)
+		return o.defer
+
 	def add_list(self, user_id, list, type = 'private', description = None):
 		params = {}
 		params['name'] = list
@@ -293,6 +298,18 @@ class Twitter(object):
 		if description:
 			params['description'] = description
 		o = EntryCollect(self, str('/%s/lists.xml' % user_id), params = params, feed_type = txml.ListList, method = 'POST')
+		return o.defer
+
+	def add_list_member(self, user_id, list_id, user):
+		params = {}
+		params['id'] = user
+		o = EntryCollect(self, str('/%s/%s/members.xml' % (user_id, list_id)), params = params, feed_type = txml.ListList, method = 'POST')
+		return o.defer
+		
+	def del_list_member(self, user_id, list_id, user):
+		params = {}
+		params['id'] = user
+		o = EntryCollect(self, str('/%s/%s/members.xml' % (user_id, list_id)), params = params, feed_type = txml.ListList, method = 'DELETE')
 		return o.defer
 
 	def del_list(self, user_id, list):
@@ -334,6 +351,13 @@ class Twitter(object):
 		o = PageCollect(self, '/statuses/home_timeline.xml', params = params, feed_type = txml.StatusList)
 		return o.defer
 		#return self._get_list('/statuses/home_timeline.xml', delegate, params, extra_args)
+
+	def list_timeline(self, user_id, list_id, delegate = None, params={}, extra_args=None):
+		"""Get updates from friends.
+
+		Calls the delgate once for each status object received."""
+		o = PageCollect(self, str('/%s/lists/%s/statuses.xml' % (user_id, list_id)), params = params, feed_type = txml.StatusList)
+		return o.defer
 
 	def user_timeline(self, delegate, user=None, params={}, extra_args=None):
 		"""Get the most recent updates for a user.

@@ -4,6 +4,9 @@ import logging
 import cmd
 from twisted.internet import reactor, stdio
 from twisted.protocols import basic
+from twisted.conch import recvline
+from twisted.conch.stdio import ConsoleManhole
+from twisted.conch.insults.insults import ServerProtocol
 import sys
 from mp import message, common
 from mp.client.termcolor import colored
@@ -12,28 +15,37 @@ import time
 
 server = 1
 
-class Cmd(basic.LineReceiver):
+class Globals:
+	connection = None
+	last_message_id = None
+
+class Cmd(recvline.HistoricRecvLine):
 
 	defaultPlugin = None
 	multiLine = False
 
 	from os import linesep as delimiter
 	def lineReceived(self, line):
+		recvline.HistoricRecvLine.lineReceived(self, line)
 		#logging.debug('Parsing %s', line)
-		if line == 'quit':
+		if line in ['quit', 'q']:
 			#Try to stop reactor
 			logging.debug('Stopping client')
 			try:
 				reactor.stop()
 			except Exception, err:
 				pass
-			return
+			return True
+		if line in ['l', 'last'] and Globals.last_message_id:
+			line = Globals.last_message_id
 		is_num = 0
+		message_hint = 'Message:'
 		try:
 			is_num = int(line)
 		except:
 			pass
 		if is_num>0:
+			message_hint = 'Reply to #%s:' % line
 			line = u'reply to %s' % line
 		#Just command - split and send
 		arr = line.split()
@@ -42,11 +54,11 @@ class Cmd(basic.LineReceiver):
 				#Send message here
 				try:
 					self.message.set(self.valueField, '\n'.join(self.value))
-					send_message(self.connection, self.message)
+					send_message(Globals.connection, self.message)
 				except Exception, err:
 					logging.exception('Error sending message: %s', err)
 			self.multiLine = False
-			return False
+			return True
 		if self.multiLine:
 			#Save line
 			logging.debug('Add line %s %s', line, line.__class__)
@@ -60,7 +72,7 @@ class Cmd(basic.LineReceiver):
 				self.defaultPlugin = arr[1]
 			else:
 				self.defaultPlugin = None
-			return False
+			return True
 		#if len(arr)>=3 and arr[0] == 'users':
 		#	arr = line.split(None, 2)
 
@@ -91,6 +103,7 @@ class Cmd(basic.LineReceiver):
 			m.name = 'unread_networks'
 
 
+
 		if len(arr) >= 4 and arr[0] == 'net' and arr[1] == 'opt':
 			#net opt <net> <opt>
 			m.set(arr[1], arr[2])
@@ -100,8 +113,8 @@ class Cmd(basic.LineReceiver):
 				m.set('value', arr[4])
 			else:
 				m.set('value', None)
-			send_message(self.connection, m)
-			return
+			send_message(Globals.connection, m)
+			return True
 		new_arr = []
 		brace_found = False
 		value = None
@@ -132,15 +145,15 @@ class Cmd(basic.LineReceiver):
 			self.message = m
 			self.valueField = 'message'
 			self.value = []
-			print_line('End message with empty line')
+			print_line('%s end message with empty line' % message_hint)
 			return True
 
 		try:
-			send_message(self.connection, m)
+			send_message(Globals.connection, m)
 		except Exception, err:
 			logging.exception('Error sending message: %s', err)
+		return True
 
-interface = Cmd()
 
 def send_message(server, message):
 	if server:
@@ -247,7 +260,7 @@ def process_message(message, connection):
 		count = ''
 		if entry.get('count'):
 			count = '[%s]' % entry.get('count')
-		print_line('%15s: %s%s%s%s%s' % (entry.get('userid', ''), count, net, status, entry.get('user', ''), status_str))
+		print_line('%15s: %s%s%s%s%s' % (entry.get('userid', ''), count, net, status, entry.get('user', entry.get('userid', 'None')), status_str))
 
 	_from  = ''
 	if message.get('net'):
@@ -294,8 +307,8 @@ def process_message(message, connection):
 		else:
 			return 0
 	def sort_by_count(i1, i2):
-		c1 = i1.get('count', 0)
-		c2 = i2.get('count', 0)
+		c1 = int(i1.get('count', 0))
+		c2 = int(i2.get('count', 0))
 		if c1>c2:
 			return -1
 		elif c1<c2:
@@ -353,13 +366,14 @@ def process_message(message, connection):
 		print_line('%sComplete: %s' % (_from, message.get('text', '')))
 
 	if 'message' == message.name:
+		Globals.last_message_id = message.get('messageid')
 		print_message(message, message.get('net', ''))
 
 def client_connected(connection):
 	logging.debug('Connection established, show prompt')
-	interface.connection = connection
+	Globals.connection = connection
+	stdio.StandardIO(ServerProtocol(Cmd))
 	print_line('Type command:')
-	stdio.StandardIO(interface)
 
 def client_disconnected(connection):
 	logging.debug('Connection broken, goodbye')
