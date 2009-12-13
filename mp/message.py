@@ -37,6 +37,10 @@ class Message:
 		self.properties[field] = value
 
 	def get(self, field, default = None):
+        if isinstance(field, type(())):
+            pass
+        else:
+            pass
 		if field not in self.properties:
 			return default
 		value = self.properties[field]
