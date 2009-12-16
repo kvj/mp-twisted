@@ -19,14 +19,15 @@ class Globals:
     connection = None
     last_message_id = None
 
-class Cmd(recvline.HistoricRecvLine):
+class Cmd(basic.LineReceiver):
 
     defaultPlugin = None
     multiLine = False
 
     from os import linesep as delimiter
+
     def lineReceived(self, line):
-        recvline.HistoricRecvLine.lineReceived(self, line)
+        #basic.LineReceiver.lineReceived(self, line)
         #logging.debug('Parsing %s', line)
         if line in ['quit', 'q']:
             #Try to stop reactor
@@ -372,7 +373,7 @@ def process_message(message, connection):
 def client_connected(connection):
     logging.debug('Connection established, show prompt')
     Globals.connection = connection
-    stdio.StandardIO(ServerProtocol(Cmd))
+    stdio.StandardIO(Cmd())
     print_line('Type command:')
 
 def client_disconnected(connection):

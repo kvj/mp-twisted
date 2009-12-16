@@ -279,20 +279,22 @@ class TwitterPlugin(plugin.Plugin):
         user = None
         group = None
         if m.name in ['unread_messages', 'mark_read']:
-            if m.get('user'):
-                user = self.get_list_item(self.users, m.get('user'))
+            u_text = m.get(('user', 'u'))
+            if u_text:
+                user = self.get_list_item(self.users, u_text)
                 if not user:
                     for id in self.groups:
                         gr = self.groups[id]
-                        u = self.get_list_item(gr['members'], m.get('user'))
+                        u = self.get_list_item(gr['members'], u_text)
                         if u:
                             user = u
                             break
                 if not user:
                     self.send_error('User not found', m, connection)
                     return True
-            if m.get('group'):
-                group = self.get_list_item(self.groups, m.get('group'))
+            g_text = m.get(('group', 'g'))
+            if g_text:
+                group = self.get_list_item(self.groups, g_text)
                 if not group:
                     self.send_error('Group not found', m, connection)
                     return True
