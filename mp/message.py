@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from twisted.words.xish.domish import Element
+from twisted.words.xish.domish import Element, elementStream
 import logging
 
 class Message:
@@ -99,6 +99,32 @@ class Message:
         if internal:
             return result
         return result.toXml()
+
+class StringToElement:
+    result = None
+
+    def on_element(self, element):
+        self.result = element
+
+    def onDocumentStart(self, rootElement):
+        pass
+
+    def onDocumentEnd(self):
+        pass
+
+    def __init__(self, src):
+        try:
+            stream = elementStream()
+            stream.ElementEvent = self.on_element
+            stream.DocumentStartEvent = self.onDocumentStart
+            stream.DocumentEndEvent = self.onDocumentEnd
+            stream.parse('<root>%s</root>' % (src))
+        except Exception, err:
+            logging.error("Error parsing XML from %s, %s", src, err)
+
+def from_xml_string(xml):
+    ste = StringToElement(xml)
+    return Message(None, ste.result)
 
 def response_message(m, name = None):
     mess = Message(m.name)

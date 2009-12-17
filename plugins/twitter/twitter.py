@@ -18,7 +18,7 @@ class TwitterPlugin(plugin.Plugin):
             gg = self.groups[id]['members']
             if itemid in gg:
                 return self._user_to_item(gg[itemid])
-    
+
     def _user_to_item(self, item, entry = None):
         if not entry:
             entry = message.Message('entry')
@@ -180,6 +180,11 @@ class TwitterPlugin(plugin.Plugin):
                     m = message.Message('message')
                     m.set('messageid', message_id)
                     m.set('userid', _sender)
+                    groups = []
+                    for gr in self.groups:
+                        if _sender in self.groups[gr]['members']:
+                            groups.append(gr)
+                    m.set('groups', groups)
                     self._userid_to_item(_sender, m)
                     #m.set('user', user.name)
                     m.set('message', entry.text)

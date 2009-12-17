@@ -181,6 +181,11 @@ class JabberPlugin(plugin.Plugin):
             ri = self.get_list_item(self.roster, _from)
             if ri:
                 self._user_to_item(ri, m)
+                gs = []
+                for gid in self.groups:
+                    if self.groups[gid] in ri.groups:
+                        gs.append(gid)
+                m.set('groups', gs)
         m.set('message', _body)
         m.set('messageid', _id)
         _time = time.mktime(_date)
@@ -384,7 +389,7 @@ class JabberPlugin(plugin.Plugin):
                 self.priority = int(m.get('priority'))
             if m.get('status'):
                 self.status = m.get('status')
-                if self.status in ['""', '""']:
+                if self.status in ['""', "''"]:
                     self.status = None
             if self.connected:
                 self.send_presence(self.show, self.priority, self.status)

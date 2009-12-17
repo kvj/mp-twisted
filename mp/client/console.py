@@ -19,6 +19,64 @@ class Globals:
     connection = None
     last_message_id = None
 
+def fix_name(m):
+    #Name shortcuts
+    if m.name in ['pl']:
+        m.name = 'plugins'
+    if m.name in ['m']:
+        m.name = 'message'
+    if m.name in ['st']:
+        m.name = 'status'
+    if m.name in ['u']:
+        m.name = 'user'
+    if m.name in ['uuu']:
+        m.name = 'users'
+    if m.name in ['g']:
+        m.name = 'group'
+    if m.name in ['gg']:
+        m.name = 'groups'
+    if m.name in ['ug']:
+        m.name = 'unread_groups'
+    if m.name in ['uu']:
+        m.name = 'unread_users'
+    if m.name in ['um']:
+        m.name = 'unread_messages'
+    if m.name in ['r']:
+        m.name = 'mark_read'
+    if m.name in ['p']:
+        m.name = 'profile'
+    if m.name in ['un']:
+        m.name = 'unread_networks'
+
+def smart_split(line):
+    arr = line.split()
+    brace = ''
+    new_arr = []
+    value = None
+    brace_found = False
+    for word in arr:
+        if brace_found:
+            if word.endswith(brace):
+                value += ' '+word[:-1]
+                new_arr.append(value)
+                brace_found = False
+            else:
+                value += ' '+word
+        else:
+            if word.startswith('"') and not word.endswith('"'):
+                brace = '"'
+                value = word[1:]
+                brace_found = True
+            elif word.startswith("'") and not word.endswith("'"):
+                brace = "'"
+                value = word[1:]
+                brace_found = True
+            else:
+                new_arr.append(word)
+    if brace_found:
+        new_arr.append(value)
+    return new_arr
+
 class Cmd(basic.LineReceiver):
 
     defaultPlugin = None
@@ -49,7 +107,7 @@ class Cmd(basic.LineReceiver):
             message_hint = 'Reply to #%s:' % line
             line = u'reply to %s' % line
         #Just command - split and send
-        arr = line.split()
+        arr = smart_split(line)
         if len(arr) == 0:
             if self.multiLine:
                 #Send message here
@@ -74,36 +132,8 @@ class Cmd(basic.LineReceiver):
             else:
                 self.defaultPlugin = None
             return True
-        #if len(arr)>=3 and arr[0] == 'users':
-        #   arr = line.split(None, 2)
 
-        #Name shortcuts
-        if m.name in ['pl']:
-            m.name = 'plugins'
-        if m.name in ['m']:
-            m.name = 'message'
-        if m.name in ['st']:
-            m.name = 'status'
-        if m.name in ['u']:
-            m.name = 'user'
-        if m.name in ['uuu']:
-            m.name = 'users'
-        if m.name in ['g']:
-            m.name = 'group'
-        if m.name in ['gg']:
-            m.name = 'groups'
-        if m.name in ['ug']:
-            m.name = 'unread_groups'
-        if m.name in ['uu']:
-            m.name = 'unread_users'
-        if m.name in ['um']:
-            m.name = 'unread_messages'
-        if m.name in ['r']:
-            m.name = 'mark_read'
-        if m.name in ['un']:
-            m.name = 'unread_networks'
-
-
+        fix_name(m)
 
         if len(arr) >= 4 and arr[0] == 'net' and arr[1] == 'opt':
             #net opt <net> <opt>
@@ -116,30 +146,21 @@ class Cmd(basic.LineReceiver):
                 m.set('value', None)
             send_message(Globals.connection, m)
             return True
-        new_arr = []
-        brace_found = False
-        value = None
-        for word in arr:
-            if brace_found:
-                if word.endswith('"'):
-                    value += ' '+word[:-1]
-                    new_arr.append(value)
-                    brace_found = False
-                else:
-                    value += ' '+word
-            else:
-                if word.startswith('"') and not word.endswith('"'):
-                    value = word[1:]
-                    brace_found = True
-                else:
-                    new_arr.append(word)
-        if brace_found:
-            new_arr.append(value)
-        for i in range((len(new_arr)-1)/2):
-            m.set(new_arr[2*i+1], new_arr[2*i+2])
+
+        for i in range((len(arr)-1)/2):
+            m.set(arr[2*i+1], arr[2*i+2])
 
         if not m.get('via') and self.defaultPlugin:
             m.set('via', self.defaultPlugin)
+        if m.name in ['profile'] and m.get('add'):
+            #Parse line
+            parr = smart_split(m.get('add'))
+            mess = message.Message(parr[0])
+            fix_name(mess)
+            for i in range((len(parr)-1)/2):
+                mess.set(parr[2*i+1], parr[2*i+2])
+            m.set('add', mess.name)
+            m.set(mess.name, mess)
         #logging.debug('Message is ready...')
         if m.name in ['message', 'reply']:
             self.multiLine = True
@@ -154,7 +175,6 @@ class Cmd(basic.LineReceiver):
         except Exception, err:
             logging.exception('Error sending message: %s', err)
         return True
-
 
 def send_message(server, message):
     if server:
@@ -221,6 +241,22 @@ def print_message(m, _from = ''):
         _id = ' #%s ' % _id
     print_line('%s%s%s%s: %s' % (_from, _id, _date, _sender, m.get('message')), 'green')
 
+def print_rule(rule):
+    condition = ''
+    plugin = ''
+    if rule.get('plugin'):
+        plugin = '[%s]' % rule.get('plugin')
+    if '*' != rule.get('field'):
+        condition = ' %s %s' % (rule.get('op', '='), rule.get('value'))
+    print_line('message: %s %s%s%s' % (rule.get('type', 'allow'), plugin, rule.get('field'), condition))
+
+def print_command(command):
+    cmd = command.name
+    for key in command.keys():
+        if command.get(key):
+            cmd = '%s %s %s' % (cmd, key, command.get(key))
+    print_line(cmd)
+
 def process_message(message, connection):
     #logging.debug('Message %s from %s', message.name, message.get('from'))
     if 'plugins' == message.name:
@@ -237,6 +273,15 @@ def process_message(message, connection):
                 if key not in ['type', 'name']:
                     arr.append('%s: %s' % (key, net.get(key)))
             print_line('%10s: %s' % (net.get('name'), u', '.join(arr)))
+
+    if 'profile' == message.name:
+        print_line('Profile:')
+        for p in message.get('commands', []):
+            print_command(p)
+    if 'rules' == message.name:
+        print_line('Filtering rules:')
+        for rule in message.get('rules', []):
+            print_rule(rule)
 
     if 'unread_networks' == message.name:
         print_line('Unread networks:')
